@@ -11,7 +11,7 @@ NVDIA CUDA  :  11.2
 CuDNN       :  8.1.0
 Protoc      :  24.9.1
 
-
+(Article Link :https://tensorflow-object-detection-api-tutorial.readthedocs.io/en/latest/index.html)
 
 comand to be executed in (Object Detection Using Tensorflow\research )
 
