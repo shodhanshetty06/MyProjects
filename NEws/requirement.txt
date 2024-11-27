@@ -1,2 +1,0 @@
-pip install streamlit requests beautifulsoup4 transformers torch
-pip install pipeline

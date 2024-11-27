@@ -1,1 +1,0 @@
-download models from "https://huggingface.co/models?pipeline_tag=summarization&sort=trending"
