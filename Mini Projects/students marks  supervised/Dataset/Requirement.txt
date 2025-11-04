@@ -1,2 +1,0 @@
-latest pip version should be available 
-pip install openpyxl
