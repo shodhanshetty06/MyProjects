@@ -1,0 +1,47 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.5
+pydantic-settings==2.7.1
+
+# Database
+sqlalchemy==2.0.36
+alembic==1.14.0
+asyncpg==0.30.0
+psycopg[binary]==3.2.3
+pgvector==0.3.6
+
+# Redis / Celery
+redis==5.2.1
+celery==5.4.0
+
+# AWS S3
+boto3==1.35.97
+
+# Auth
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+# Pinned explicitly: passlib 1.7.4 (unmaintained since 2020) probes
+# `bcrypt.__about__.__version__` to detect its backend, which bcrypt>=4.1
+# removed — passlib's `passlib[bcrypt]` extra alone resolves to a
+# newer, incompatible bcrypt and every hash/verify call raises.
+bcrypt==4.0.1
+python-multipart==0.0.20
+email-validator==2.2.0
+
+# AI (resume parsing + embeddings)
+anthropic==0.69.0
+voyageai==0.3.2
+pypdf==5.1.0
+python-docx==1.1.2
+
+# Job ingestion (ATS adapters)
+httpx==0.28.1
+beautifulsoup4==4.12.3
+lxml==5.3.0
+
+# ATS resume generator (PDF export — DOCX already covered by python-docx above)
+reportlab==4.2.5
+
+# Auto Apply (Greenhouse/Lever submit over httpx+beautifulsoup above; Workday
+# and the generic fallback drive a real headless browser)
+playwright==1.49.1
