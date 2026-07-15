@@ -9,6 +9,7 @@ This repository contains multiple hands-on projects I built while learning and a
 ## Included Project Areas
 
 - Cold Email Generator
+- Job Seaker
 - Mini Projects
 - News Summarization
 - Object Detection using TensorFlow
