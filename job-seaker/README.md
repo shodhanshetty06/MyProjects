@@ -86,18 +86,33 @@ job-search-platform/
 
 ## Getting started
 
+Requires Docker Desktop running locally (the daemon must be started, not
+just installed).
+
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-- API: http://localhost:8000
-- API docs (Swagger): http://localhost:8000/api/v1/docs
-- ReDoc: http://localhost:8000/api/v1/redoc
-- Health check: http://localhost:8000/api/v1/health
-- Frontend: http://localhost:3000
+Everything is served through a single nginx reverse proxy — **one URL for
+the whole app**:
 
-Run migrations:
+**http://localhost:5000**
+
+| Path                       | Routed to                                  |
+|----------------------------|---------------------------------------------|
+| `/`                        | Frontend (React + Vite)                      |
+| `/api/v1/...`              | Backend API                                  |
+| `/api/v1/docs`             | Swagger UI                                   |
+| `/api/v1/redoc`            | ReDoc                                        |
+| `/api/v1/health`           | Health check                                 |
+| `/api/v1/matching/ws`      | Matching realtime websocket                  |
+
+The individual containers (`api:8000`, `frontend:3000`) are no longer
+published to the host — only the `nginx` service is, on port 5000 — so
+there is exactly one link to remember.
+
+Run migrations (required once, after the first `docker compose up`):
 
 ```bash
 docker compose exec api alembic upgrade head

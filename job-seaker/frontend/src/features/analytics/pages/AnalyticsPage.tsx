@@ -1,12 +1,17 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
-import "@/features/analytics/analytics.css";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { staggerChildren } from "@/components/motion/variants";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { SkeletonCard } from "@/components/ui/Skeleton";
+import { Table } from "@/components/ui/Table";
+import { motion } from "framer-motion";
+
 import { exportApplicationsCsv, exportDashboardPdf, getAnalyticsDashboard } from "@/features/analytics/api";
 import { BarListChart } from "@/features/analytics/components/BarListChart";
 import { ChartCard } from "@/features/analytics/components/ChartCard";
 import { ColumnChart } from "@/features/analytics/components/ColumnChart";
-import { DataTable } from "@/features/analytics/components/DataTable";
 import { FilterBar } from "@/features/analytics/components/FilterBar";
 import { HeatmapCalendar } from "@/features/analytics/components/HeatmapCalendar";
 import { StatTile } from "@/features/analytics/components/StatTile";
@@ -82,11 +87,8 @@ export function AnalyticsPage() {
   };
 
   return (
-    <section className="analytics-page">
-      <header className="analytics-page__header">
-        <h1>Analytics</h1>
-        <p className="analytics-page__subtitle">Your job search, measured.</p>
-      </header>
+    <div>
+      <PageHeader eyebrow="Insights" title="Analytics" description="Your job search, measured." />
 
       <FilterBar
         filters={filters}
@@ -101,12 +103,18 @@ export function AnalyticsPage() {
         isExportingPdf={isExportingPdf}
       />
 
-      {isLoading && <p className="analytics-status">Loading analytics…</p>}
-      {isError && <p className="analytics-status analytics-status--error">Unable to load analytics.</p>}
+      {isLoading && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <SkeletonCard key={i} />
+          ))}
+        </div>
+      )}
+      {isError && <ErrorState description="Unable to load analytics." />}
 
       {data && (
-        <div className="analytics-content" style={{ opacity: isFetching ? 0.6 : 1 }}>
-          <div className="analytics-summary">
+        <div style={{ opacity: isFetching ? 0.6 : 1, transition: "opacity 0.2s" }}>
+          <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             <StatTile label="Total applications" value={formatCompactNumber(data.summary.total_applications)} />
             <StatTile label="Interview rate" value={formatPercent(data.summary.interview_rate)} />
             <StatTile label="Offer rate" value={formatPercent(data.summary.offer_rate)} />
@@ -114,7 +122,12 @@ export function AnalyticsPage() {
             <StatTile label="Avg. response time" value={formatDays(data.summary.average_response_days)} />
           </div>
 
-          <div className="analytics-grid">
+          <motion.div
+            variants={staggerChildren(0.05)}
+            initial="hidden"
+            animate="visible"
+            className="grid gap-4 lg:grid-cols-2"
+          >
             <ChartCard title="Applications" subtitle="Applications submitted over time">
               <TrendLineChart
                 interval={data.applications_trend.interval}
@@ -151,18 +164,12 @@ export function AnalyticsPage() {
               />
             </ChartCard>
 
-            <ChartCard title="Resume performance" subtitle="How your base resumes are trending">
-              <div className="analytics-substats">
+            <ChartCard title="Resume performance" subtitle="How your base resumes are trending" className="lg:col-span-2">
+              <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <StatTile label="Resumes" value={String(data.resume_performance.total_resumes)} />
                 <StatTile label="Versions" value={String(data.resume_performance.total_versions)} />
-                <StatTile
-                  label="Parse success"
-                  value={formatPercent(data.resume_performance.parse_success_rate)}
-                />
-                <StatTile
-                  label="Avg. skills / resume"
-                  value={data.resume_performance.average_skills_per_version.toFixed(1)}
-                />
+                <StatTile label="Parse success" value={formatPercent(data.resume_performance.parse_success_rate)} />
+                <StatTile label="Avg. skills / resume" value={data.resume_performance.average_skills_per_version.toFixed(1)} />
               </div>
               <TrendLineChart
                 interval={interval}
@@ -171,28 +178,17 @@ export function AnalyticsPage() {
               />
             </ChartCard>
 
-            <ChartCard title="ATS resume performance" subtitle="Optimization score trends across your ATS-tailored resumes">
-              <div className="analytics-substats">
+            <ChartCard title="ATS resume performance" subtitle="Optimization score trends across your ATS-tailored resumes" className="lg:col-span-2">
+              <div className="mb-4 grid grid-cols-3 gap-2">
                 <StatTile
                   label="Avg. ATS score"
-                  value={
-                    data.ats_resume_performance.average_ats_score !== null
-                      ? data.ats_resume_performance.average_ats_score.toFixed(0)
-                      : "N/A"
-                  }
+                  value={data.ats_resume_performance.average_ats_score !== null ? data.ats_resume_performance.average_ats_score.toFixed(0) : "N/A"}
                 />
                 <StatTile
                   label="Avg. keyword score"
-                  value={
-                    data.ats_resume_performance.average_keyword_score !== null
-                      ? data.ats_resume_performance.average_keyword_score.toFixed(0)
-                      : "N/A"
-                  }
+                  value={data.ats_resume_performance.average_keyword_score !== null ? data.ats_resume_performance.average_keyword_score.toFixed(0) : "N/A"}
                 />
-                <StatTile
-                  label="Completion rate"
-                  value={formatPercent(data.ats_resume_performance.completion_rate)}
-                />
+                <StatTile label="Completion rate" value={formatPercent(data.ats_resume_performance.completion_rate)} />
               </div>
               <TrendLineChart
                 interval={interval}
@@ -202,27 +198,24 @@ export function AnalyticsPage() {
                   { key: "average_keyword_score", label: "Keyword score", color: secondary },
                 ]}
               />
-              <ColumnChart
-                data={data.ats_resume_performance.score_distribution.map((bucket) => ({
-                  label: bucket.range_label,
-                  value: bucket.count,
-                }))}
-                color={secondary}
-                height={140}
-              />
+              <div className="mt-3">
+                <ColumnChart
+                  data={data.ats_resume_performance.score_distribution.map((bucket) => ({ label: bucket.range_label, value: bucket.count }))}
+                  color={secondary}
+                  height={140}
+                />
+              </div>
             </ChartCard>
 
             <ChartCard title="Top skills" subtitle="From your current resume(s)">
-              <BarListChart
-                items={data.top_skills.map((s) => ({ label: s.skill, value: s.count }))}
-                color={primary}
-              />
+              <BarListChart items={data.top_skills.map((s) => ({ label: s.skill, value: s.count }))} color={primary} />
             </ChartCard>
 
             <ChartCard title="Top companies" subtitle="Where you've applied">
-              <DataTable<CompanyOutcome>
+              <Table<CompanyOutcome>
                 rowKey={(row) => row.company_name}
                 rows={data.top_companies}
+                emptyTitle="No applications yet"
                 columns={[
                   { key: "company", header: "Company", render: (row) => row.company_name },
                   { key: "applications", header: "Applications", align: "right", render: (row) => row.applications },
@@ -233,10 +226,7 @@ export function AnalyticsPage() {
             </ChartCard>
 
             <ChartCard title="Top countries" subtitle="Where your applications are located">
-              <BarListChart
-                items={data.top_countries.map((c) => ({ label: c.country, value: c.count }))}
-                color={primary}
-              />
+              <BarListChart items={data.top_countries.map((c) => ({ label: c.country, value: c.count }))} color={primary} />
             </ChartCard>
 
             <ChartCard title="Hiring trends" subtitle="Market-wide job postings ingested over time">
@@ -245,29 +235,28 @@ export function AnalyticsPage() {
                 data={data.hiring_trends.trend}
                 series={[{ key: "jobs_posted", label: "Jobs posted", color: primary }]}
               />
-              <DataTable<HiringCompanyCount>
-                rowKey={(row) => row.company_name}
-                rows={data.hiring_trends.top_hiring_companies}
-                columns={[
-                  { key: "company", header: "Company", render: (row) => row.company_name },
-                  { key: "jobs", header: "Jobs posted", align: "right", render: (row) => row.jobs_posted },
-                ]}
-              />
+              <div className="mt-3">
+                <Table<HiringCompanyCount>
+                  rowKey={(row) => row.company_name}
+                  rows={data.hiring_trends.top_hiring_companies}
+                  emptyTitle="No data yet"
+                  columns={[
+                    { key: "company", header: "Company", render: (row) => row.company_name },
+                    { key: "jobs", header: "Jobs posted", align: "right", render: (row) => row.jobs_posted },
+                  ]}
+                />
+              </div>
             </ChartCard>
 
             <ChartCard title="Skill demand" subtitle="Most in-demand skills across active job postings">
               <BarListChart
-                items={data.skill_demand.map((s) => ({
-                  label: s.skill,
-                  value: s.job_count,
-                  badge: s.user_has_skill ? "✓ you have this" : undefined,
-                }))}
+                items={data.skill_demand.map((s) => ({ label: s.skill, value: s.job_count, badge: s.user_has_skill ? "✓ you have this" : undefined }))}
                 color={primary}
               />
             </ChartCard>
 
             <ChartCard title="Response time" subtitle="Days from applying to the first status update">
-              <div className="analytics-substats">
+              <div className="mb-3">
                 <StatTile label="Overall average" value={formatDays(data.response_time.overall_average_days)} />
               </div>
               <TrendLineChart
@@ -278,17 +267,17 @@ export function AnalyticsPage() {
               />
             </ChartCard>
 
-            <ChartCard title="Application heatmap" subtitle="Your application activity by day">
-              <div className="analytics-substats">
+            <ChartCard title="Application heatmap" subtitle="Your application activity by day" className="lg:col-span-2">
+              <div className="mb-3 grid grid-cols-3 gap-2">
                 <StatTile label="Total applications" value={String(data.heatmap.total)} />
                 <StatTile label="Current streak" value={`${data.heatmap.current_streak_days}d`} />
                 <StatTile label="Longest streak" value={`${data.heatmap.longest_streak_days}d`} />
               </div>
               <HeatmapCalendar cells={data.heatmap.cells} />
             </ChartCard>
-          </div>
+          </motion.div>
         </div>
       )}
-    </section>
+    </div>
   );
 }

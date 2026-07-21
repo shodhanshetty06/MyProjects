@@ -1,34 +1,10 @@
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
+@import "tailwindcss";
 
-body {
-  margin: 0;
-  font-family:
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    sans-serif;
-}
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
 
-.app-shell {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-}
+@import "./tokens.css";
+@import "./base.css";
 
-.app-content {
-  flex: 1;
-  padding: 1.5rem;
-}
-
-.app-nav {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 1rem;
-  padding: 0.75rem 1.5rem;
-  border-bottom: 1px solid #ddd;
-}
+/* TODO(polish phase): delete once every page has migrated off these classes. */
+@import "./legacy.css";

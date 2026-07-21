@@ -102,7 +102,7 @@ export function MatchingPage() {
   });
 
   return (
-    <section>
+    <section className="feature-page">
       <h1>Matching</h1>
 
       <fieldset>

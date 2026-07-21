@@ -147,7 +147,7 @@ class Settings(BaseSettings):
     # --- Gmail / Email Tracking ---
     GMAIL_OAUTH_CLIENT_ID: str | None = None
     GMAIL_OAUTH_CLIENT_SECRET: str | None = None
-    GMAIL_OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/v1/email-tracking/gmail/callback"
+    GMAIL_OAUTH_REDIRECT_URI: str = "http://localhost:5000/api/v1/email-tracking/gmail/callback"
     GMAIL_OAUTH_SCOPES: str = "https://www.googleapis.com/auth/gmail.readonly"
     GMAIL_OAUTH_SUCCESS_REDIRECT_URL: str | None = None
     GMAIL_OAUTH_FAILURE_REDIRECT_URL: str | None = None

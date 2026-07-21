@@ -1,0 +1,149 @@
+/**
+ * Design tokens - single source of truth for color, radius, shadow, and
+ * font primitives. Raw values live as CSS custom properties scoped to
+ * `:root` (light) and `[data-theme="dark"]` (dark, toggled by
+ * `stores/themeStore`); the `@theme inline` block below re-exposes them
+ * under Tailwind's token namespaces so `bg-surface`, `text-ink-secondary`,
+ * `rounded-lg`, `shadow-glow`, etc. work as utilities and stay reactive to
+ * the active theme without a rebuild.
+ */
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  color-scheme: light;
+
+  --raw-bg: #fafafa;
+  --raw-surface: #ffffff;
+  --raw-surface-2: #f4f4f5;
+  --raw-surface-hover: #ececee;
+  --raw-border: #e4e4e7;
+  --raw-border-strong: #d4d4d8;
+  --raw-ink: #09090b;
+  --raw-ink-secondary: #52525b;
+  --raw-ink-muted: #9a9aa2;
+  --raw-ink-inverted: #fafafa;
+
+  --raw-brand: #6d5bff;
+  --raw-brand-hover: #5b48f5;
+  --raw-brand-ink: #ffffff;
+  --raw-brand-soft: rgb(109 91 255 / 10%);
+  --raw-brand-border: rgb(109 91 255 / 28%);
+  --raw-accent-a: #6d5bff;
+  --raw-accent-b: #22d3ee;
+
+  --raw-success: #16a34a;
+  --raw-success-soft: rgb(22 163 74 / 12%);
+  --raw-warning: #d97706;
+  --raw-warning-soft: rgb(217 119 6 / 12%);
+  --raw-danger: #dc2626;
+  --raw-danger-soft: rgb(220 38 38 / 12%);
+  --raw-info: #2563eb;
+  --raw-info-soft: rgb(37 99 235 / 12%);
+
+  --raw-overlay: rgb(9 9 11 / 45%);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --raw-bg: #08090a;
+  --raw-surface: #101113;
+  --raw-surface-2: #17181b;
+  --raw-surface-hover: #1e2024;
+  --raw-border: #232428;
+  --raw-border-strong: #2f3136;
+  --raw-ink: #f4f4f5;
+  --raw-ink-secondary: #a1a1aa;
+  --raw-ink-muted: #6b6d73;
+  --raw-ink-inverted: #09090b;
+
+  --raw-brand: #8577ff;
+  --raw-brand-hover: #9a8fff;
+  --raw-brand-ink: #ffffff;
+  --raw-brand-soft: rgb(133 119 255 / 16%);
+  --raw-brand-border: rgb(133 119 255 / 32%);
+  --raw-accent-a: #8577ff;
+  --raw-accent-b: #22d3ee;
+
+  --raw-success: #34d399;
+  --raw-success-soft: rgb(52 211 153 / 14%);
+  --raw-warning: #fbbf24;
+  --raw-warning-soft: rgb(251 191 36 / 14%);
+  --raw-danger: #f87171;
+  --raw-danger-soft: rgb(248 113 113 / 14%);
+  --raw-info: #60a5fa;
+  --raw-info-soft: rgb(96 165 250 / 14%);
+
+  --raw-overlay: rgb(0 0 0 / 60%);
+}
+
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", monospace;
+
+  --color-bg: var(--raw-bg);
+  --color-surface: var(--raw-surface);
+  --color-surface-2: var(--raw-surface-2);
+  --color-surface-hover: var(--raw-surface-hover);
+  --color-border: var(--raw-border);
+  --color-border-strong: var(--raw-border-strong);
+  --color-ink: var(--raw-ink);
+  --color-ink-secondary: var(--raw-ink-secondary);
+  --color-ink-muted: var(--raw-ink-muted);
+  --color-ink-inverted: var(--raw-ink-inverted);
+
+  --color-brand: var(--raw-brand);
+  --color-brand-hover: var(--raw-brand-hover);
+  --color-brand-ink: var(--raw-brand-ink);
+  --color-brand-soft: var(--raw-brand-soft);
+  --color-brand-border: var(--raw-brand-border);
+  --color-accent-a: var(--raw-accent-a);
+  --color-accent-b: var(--raw-accent-b);
+
+  --color-success: var(--raw-success);
+  --color-success-soft: var(--raw-success-soft);
+  --color-warning: var(--raw-warning);
+  --color-warning-soft: var(--raw-warning-soft);
+  --color-danger: var(--raw-danger);
+  --color-danger-soft: var(--raw-danger-soft);
+  --color-info: var(--raw-info);
+  --color-info-soft: var(--raw-info-soft);
+
+  --color-overlay: var(--raw-overlay);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-2xl: 28px;
+
+  --shadow-xs: 0 1px 2px rgb(9 9 11 / 4%);
+  --shadow-sm: 0 1px 3px rgb(9 9 11 / 6%), 0 1px 2px rgb(9 9 11 / 4%);
+  --shadow-md: 0 4px 12px rgb(9 9 11 / 8%), 0 2px 4px rgb(9 9 11 / 4%);
+  --shadow-lg: 0 12px 32px rgb(9 9 11 / 12%), 0 4px 8px rgb(9 9 11 / 6%);
+  --shadow-glow: 0 0 0 1px var(--raw-brand-border), 0 8px 24px rgb(109 91 255 / 20%);
+
+  --animate-fade-in: fade-in 0.4s ease-out;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes shimmer {
+    from {
+      background-position: 200% 0;
+    }
+    to {
+      background-position: -200% 0;
+    }
+  }
+}

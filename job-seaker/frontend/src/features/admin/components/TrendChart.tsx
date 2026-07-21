@@ -8,7 +8,7 @@ interface TrendChartProps {
   height?: number;
 }
 
-export function TrendChart({ data, color = "#2a78d6", height = 160 }: TrendChartProps) {
+export function TrendChart({ data, color = "var(--adm-blue)", height = 160 }: TrendChartProps) {
   if (data.length === 0) {
     return <p className="admin-empty">No data for this period.</p>;
   }

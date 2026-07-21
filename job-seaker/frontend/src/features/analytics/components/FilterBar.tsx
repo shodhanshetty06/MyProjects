@@ -1,4 +1,10 @@
+import { Download, Search } from "lucide-react";
+
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
 import type { AnalyticsFiltersParams, TrendInterval } from "@/features/analytics/types";
+import { cn } from "@/lib/cn";
 
 export interface DateRangePreset {
   label: string;
@@ -6,10 +12,16 @@ export interface DateRangePreset {
 }
 
 const PRESETS: DateRangePreset[] = [
-  { label: "Last 7 days", days: 7 },
-  { label: "Last 30 days", days: 30 },
-  { label: "Last 90 days", days: 90 },
-  { label: "Last 12 months", days: 365 },
+  { label: "7d", days: 7 },
+  { label: "30d", days: 30 },
+  { label: "90d", days: 90 },
+  { label: "12mo", days: 365 },
+];
+
+const INTERVAL_OPTIONS = [
+  { value: "day", label: "Daily" },
+  { value: "week", label: "Weekly" },
+  { value: "month", label: "Monthly" },
 ];
 
 function toIsoDate(date: Date): string {
@@ -42,76 +54,69 @@ export function FilterBar({
   isExportingPdf,
 }: FilterBarProps) {
   return (
-    <div className="analytics-filterbar">
-      <div className="analytics-filterbar__group" role="group" aria-label="Date range">
+    <div className="mb-6 flex flex-wrap items-center gap-2 rounded-[var(--radius-lg)] border border-border bg-surface p-3">
+      <div className="flex items-center gap-1 rounded-[var(--radius-md)] bg-surface-2 p-1" role="group" aria-label="Date range">
         {PRESETS.map((preset) => (
           <button
             key={preset.label}
             type="button"
-            className={`analytics-chip${activePresetDays === preset.days ? " analytics-chip--active" : ""}`}
             onClick={() => preset.days !== null && onPresetSelect(preset.days)}
+            className={cn(
+              "rounded-[var(--radius-sm)] px-2.5 py-1.5 text-xs font-medium transition-colors",
+              activePresetDays === preset.days ? "bg-surface text-ink shadow-xs" : "text-ink-secondary hover:text-ink",
+            )}
           >
             {preset.label}
           </button>
         ))}
-        <input
-          type="date"
-          aria-label="Custom start date"
-          className="analytics-date-input"
-          value={filters.date_from ? filters.date_from.slice(0, 10) : ""}
-          max={filters.date_to ? filters.date_to.slice(0, 10) : toIsoDate(new Date())}
-          onChange={(event) =>
-            onCustomRangeChange(
-              event.target.value ? `${event.target.value}T00:00:00Z` : undefined,
-              filters.date_to,
-            )
-          }
-        />
-        <span className="analytics-filterbar__sep">to</span>
-        <input
-          type="date"
-          aria-label="Custom end date"
-          className="analytics-date-input"
-          value={filters.date_to ? filters.date_to.slice(0, 10) : ""}
-          max={toIsoDate(new Date())}
-          onChange={(event) =>
-            onCustomRangeChange(
-              filters.date_from,
-              event.target.value ? `${event.target.value}T23:59:59Z` : undefined,
-            )
-          }
-        />
       </div>
 
-      <select
-        aria-label="Trend granularity"
-        className="analytics-select"
-        value={filters.interval ?? "week"}
-        onChange={(event) => onIntervalChange(event.target.value as TrendInterval)}
-      >
-        <option value="day">Daily</option>
-        <option value="week">Weekly</option>
-        <option value="month">Monthly</option>
-      </select>
-
       <input
-        type="search"
-        className="analytics-text-input"
-        placeholder="Filter by company"
-        aria-label="Filter by company"
-        value={filters.company_name ?? ""}
-        onChange={(event) => onCompanyNameChange(event.target.value)}
+        type="date"
+        aria-label="Custom start date"
+        className="h-8 rounded-[var(--radius-md)] border border-border bg-surface px-2 text-xs text-ink outline-none focus:border-brand"
+        value={filters.date_from ? filters.date_from.slice(0, 10) : ""}
+        max={filters.date_to ? filters.date_to.slice(0, 10) : toIsoDate(new Date())}
+        onChange={(event) =>
+          onCustomRangeChange(event.target.value ? `${event.target.value}T00:00:00Z` : undefined, filters.date_to)
+        }
+      />
+      <span className="text-xs text-ink-muted">to</span>
+      <input
+        type="date"
+        aria-label="Custom end date"
+        className="h-8 rounded-[var(--radius-md)] border border-border bg-surface px-2 text-xs text-ink outline-none focus:border-brand"
+        value={filters.date_to ? filters.date_to.slice(0, 10) : ""}
+        max={toIsoDate(new Date())}
+        onChange={(event) =>
+          onCustomRangeChange(filters.date_from, event.target.value ? `${event.target.value}T23:59:59Z` : undefined)
+        }
       />
 
-      <div className="analytics-filterbar__spacer" />
+      <Select
+        value={filters.interval ?? "week"}
+        onValueChange={(v) => onIntervalChange(v as TrendInterval)}
+        options={INTERVAL_OPTIONS}
+        className="w-32"
+      />
 
-      <div className="analytics-filterbar__exports">
-        <button type="button" className="analytics-button" onClick={onExportCsv} disabled={isExportingCsv}>
-          {isExportingCsv ? "Exporting…" : "Export CSV"}
-        </button>
-        <button type="button" className="analytics-button" onClick={onExportPdf} disabled={isExportingPdf}>
-          {isExportingPdf ? "Exporting…" : "Export PDF"}
-        </button>
+      <Input
+        leadingIcon={<Search />}
+        placeholder="Filter by company"
+        value={filters.company_name ?? ""}
+        onChange={(event) => onCompanyNameChange(event.target.value)}
+        className="w-44"
+      />
+
+      <div className="ml-auto flex items-center gap-2">
+        <Button variant="secondary" size="sm" onClick={onExportCsv} isLoading={isExportingCsv}>
+          <Download className="size-3.5" aria-hidden />
+          CSV
+        </Button>
+        <Button variant="secondary" size="sm" onClick={onExportPdf} isLoading={isExportingPdf}>
+          <Download className="size-3.5" aria-hidden />
+          PDF
+        </Button>
       </div>
     </div>
   );

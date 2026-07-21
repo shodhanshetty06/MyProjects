@@ -49,23 +49,23 @@ export function PlatformAnalyticsPage() {
 
           <div className="admin-card admin-section">
             <h2 className="admin-section__title">Active users</h2>
-            <TrendChart data={data.active_users_trend} color="#2a78d6" />
+            <TrendChart data={data.active_users_trend} color="var(--adm-blue)" />
           </div>
           <div className="admin-card admin-section">
             <h2 className="admin-section__title">Applications submitted</h2>
-            <TrendChart data={data.applications_trend} color="#0f7a3d" />
+            <TrendChart data={data.applications_trend} color="var(--adm-green)" />
           </div>
           <div className="admin-card admin-section">
             <h2 className="admin-section__title">Jobs posted</h2>
-            <TrendChart data={data.jobs_posted_trend} color="#a8710a" />
+            <TrendChart data={data.jobs_posted_trend} color="var(--adm-amber)" />
           </div>
           <div className="admin-card admin-section">
             <h2 className="admin-section__title">Companies added</h2>
-            <TrendChart data={data.companies_added_trend} color="#7a4fd6" />
+            <TrendChart data={data.companies_added_trend} color="var(--color-accent-b)" />
           </div>
           <div className="admin-card admin-section">
             <h2 className="admin-section__title">Reports filed</h2>
-            <TrendChart data={data.reports_filed_trend} color="#c23636" />
+            <TrendChart data={data.reports_filed_trend} color="var(--adm-red)" />
           </div>
         </>
       )}

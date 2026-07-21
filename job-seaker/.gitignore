@@ -46,3 +46,6 @@ logs/
 
 # --- Alembic (keep versions, ignore local db) ---
 *.sqlite3
+
+# --- Celery ---
+celerybeat-schedule
