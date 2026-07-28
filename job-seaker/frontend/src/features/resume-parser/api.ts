@@ -2,6 +2,7 @@ import type { AxiosProgressEvent } from "axios";
 
 import { apiClient } from "@/api/client";
 import type {
+  ParsedResumeData,
   ResumeRead,
   ResumeUpdateRequest,
   ResumeVersionDetail,
@@ -98,6 +99,20 @@ export async function getResumeVersion(
 ): Promise<ResumeVersionDetail> {
   const response = await apiClient.get<BaseResponse<ResumeVersionDetail>>(
     `/resumes/${resumeId}/versions/${versionId}`,
+    authHeaders(userId),
+  );
+  return response.data.data as ResumeVersionDetail;
+}
+
+export async function updateResumeParsedData(
+  userId: string,
+  resumeId: string,
+  versionId: string,
+  payload: ParsedResumeData,
+): Promise<ResumeVersionDetail> {
+  const response = await apiClient.patch<BaseResponse<ResumeVersionDetail>>(
+    `/resumes/${resumeId}/versions/${versionId}/parsed-data`,
+    payload,
     authHeaders(userId),
   );
   return response.data.data as ResumeVersionDetail;

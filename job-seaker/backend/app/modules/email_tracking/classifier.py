@@ -1,5 +1,5 @@
-"""Claude-based email classification — reuses `AIService.extract_structured`
-(`app/services/ai/service.py`) rather than a second Anthropic client, same
+"""AI-based email classification — reuses `AIService.extract_structured`
+(`app/services/ai/service.py`) rather than a second provider client, same
 convention `job_ingestion/tasks.py::_extract_job_skills` follows.
 """
 

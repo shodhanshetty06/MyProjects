@@ -65,6 +65,10 @@ export function CompanyDetailPage() {
     relevance_score: null,
     match_score: null,
     keyword_score: null,
+    quality_score: job.quality_score,
+    quality_reasons: job.quality_reasons,
+    seniority: job.seniority,
+    tech_stack: job.tech_stack,
   }));
 
   return (
@@ -117,7 +121,31 @@ export function CompanyDetailPage() {
                 ~{Math.round(intel.hiring_frequency_per_month)} hires/mo
               </span>
             )}
+            {intel?.company_size && <span>{intel.company_size} employees</span>}
+            {intel?.funding_stage && <span>{intel.funding_stage}</span>}
+            {intel?.remote_policy && intel.remote_policy !== "unknown" && (
+              <span className="capitalize">{intel.remote_policy.replace("_", " ")}</span>
+            )}
+            {company.avg_salary_yearly != null && (
+              <span>
+                ~{Math.round(company.avg_salary_yearly).toLocaleString()} {company.avg_salary_currency ?? ""} avg
+                salary
+              </span>
+            )}
           </div>
+
+          {intel?.tech_stack && intel.tech_stack.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {intel.tech_stack.map((tech) => (
+                <span
+                  key={tech}
+                  className="rounded-full border border-border bg-surface-2 px-2 py-0.5 text-xs text-ink-secondary"
+                >
+                  {tech}
+                </span>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 

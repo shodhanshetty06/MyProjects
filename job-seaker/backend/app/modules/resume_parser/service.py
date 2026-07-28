@@ -8,14 +8,19 @@ from typing import Sequence
 from app.core.config import get_settings
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
-from app.integrations.s3_client import S3Storage
+from app.interfaces.storage_provider import StorageProvider
 from app.modules.resume_parser.models import (
     Resume,
     ResumeContentType,
     ResumeVersion,
     ResumeVersionStatus,
 )
-from app.modules.resume_parser.repository import ResumeRepository, ResumeVersionRepository
+from app.modules.resume_parser.repository import (
+    ResumeParsedDataRepository,
+    ResumeRepository,
+    ResumeVersionRepository,
+)
+from app.modules.resume_parser.schemas import ParsedResumeData
 
 logger = get_logger(__name__)
 
@@ -54,11 +59,13 @@ class ResumeParserService:
         self,
         resume_repository: ResumeRepository,
         version_repository: ResumeVersionRepository,
-        s3_storage: S3Storage,
+        storage_provider: StorageProvider,
+        parsed_data_repository: ResumeParsedDataRepository,
     ) -> None:
         self.resume_repository = resume_repository
         self.version_repository = version_repository
-        self.s3_storage = s3_storage
+        self.storage_provider = storage_provider
+        self.parsed_data_repository = parsed_data_repository
         self.settings = get_settings()
 
     def _validate_upload(self, *, filename: str, content_type_header: str | None, size: int) -> ResumeContentType:
@@ -99,7 +106,7 @@ class ResumeParserService:
             "Resume uploaded",
             extra={"extra_fields": {"resume_id": str(resume.id), "user_id": str(user_id)}},
         )
-        self._enqueue_parsing(version.id)
+        self._enqueue_parsing(version.id, user_id)
         return resume, version
 
     async def upload_new_version(
@@ -136,7 +143,7 @@ class ResumeParserService:
                 }
             },
         )
-        self._enqueue_parsing(version.id)
+        self._enqueue_parsing(version.id, user_id)
         return version
 
     async def _create_version(
@@ -155,19 +162,19 @@ class ResumeParserService:
             status=ResumeVersionStatus.UPLOADED,
             content_type=content_type,
             original_filename=filename,
-            s3_bucket=self.s3_storage.bucket,
+            s3_bucket=self.storage_provider.bucket,
             s3_key="",
             file_size_bytes=len(data),
         )
         key = _s3_key(resume.user_id, resume.id, version.id, filename)
-        self.s3_storage.upload_bytes(data, key)
+        self.storage_provider.upload_bytes(data, key)
         await self.version_repository.update(version, s3_key=key)
         return version
 
-    def _enqueue_parsing(self, version_id: uuid.UUID) -> None:
+    def _enqueue_parsing(self, version_id: uuid.UUID, user_id: uuid.UUID) -> None:
         from app.modules.resume_parser.tasks import parse_resume_task
 
-        parse_resume_task.delay(str(version_id))
+        parse_resume_task.delay(str(version_id), str(user_id))
 
     async def list_resumes(
         self, *, user_id: uuid.UUID, offset: int, limit: int
@@ -203,6 +210,38 @@ class ResumeParserService:
     ) -> Sequence[ResumeVersion]:
         await self.get_resume(user_id=user_id, resume_id=resume_id)
         return await self.version_repository.list_for_resume(resume_id=resume_id)
+
+    async def update_parsed_data(
+        self,
+        *,
+        user_id: uuid.UUID,
+        resume_id: uuid.UUID,
+        version_id: uuid.UUID,
+        data: ParsedResumeData,
+    ) -> ResumeVersion:
+        """Persists the Profile Review screen's edits (accepted, corrected,
+        deleted, or newly added fields) over the AI extraction. Requires
+        parsing to have already produced a `ResumeParsedData` row — nothing
+        to correct until that exists.
+        """
+        version = await self.get_version(
+            user_id=user_id, resume_id=resume_id, version_id=version_id, with_details=True
+        )
+        if version.parsed_data is None:
+            raise NotFoundError("Resume has not finished parsing yet.")
+
+        await self.parsed_data_repository.update(
+            version.parsed_data,
+            summary=data.summary,
+            skills=data.skills,
+            experience=[item.model_dump() for item in data.experience],
+            education=[item.model_dump() for item in data.education],
+            projects=[item.model_dump() for item in data.projects],
+            certifications=[item.model_dump() for item in data.certifications],
+            achievements=data.achievements,
+            languages=[item.model_dump() for item in data.languages],
+        )
+        return version
 
     async def update_resume(self, *, user_id: uuid.UUID, resume_id: uuid.UUID, title: str) -> Resume:
         resume = await self.get_resume(user_id=user_id, resume_id=resume_id)
@@ -240,4 +279,4 @@ class ResumeParserService:
         self, *, user_id: uuid.UUID, resume_id: uuid.UUID, version_id: uuid.UUID
     ) -> str:
         version = await self.get_version(user_id=user_id, resume_id=resume_id, version_id=version_id)
-        return self.s3_storage.generate_presigned_download_url(version.s3_key)
+        return self.storage_provider.get_download_url(version.s3_key)

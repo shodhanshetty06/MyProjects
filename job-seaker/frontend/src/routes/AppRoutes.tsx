@@ -27,17 +27,18 @@ const ForgotPasswordPage = lazy(() => import("@/features/auth/pages/ForgotPasswo
 const ResetPasswordPage = lazy(() => import("@/features/auth/pages/ResetPasswordPage").then((m) => ({ default: m.ResetPasswordPage })));
 const VerifyEmailPage = lazy(() => import("@/features/auth/pages/VerifyEmailPage").then((m) => ({ default: m.VerifyEmailPage })));
 
-const DashboardPage = lazy(() => import("@/features/dashboard/pages/DashboardPage").then((m) => ({ default: m.DashboardPage })));
+const WelcomePage = lazy(() => import("@/features/onboarding/pages/WelcomePage").then((m) => ({ default: m.WelcomePage })));
+const ProfileReviewPage = lazy(() => import("@/features/onboarding/pages/ProfileReviewPage").then((m) => ({ default: m.ProfileReviewPage })));
+const WorkspacePage = lazy(() => import("@/features/workspace/pages/WorkspacePage").then((m) => ({ default: m.WorkspacePage })));
 
 const ResumeManagerPage = lazy(() => import("@/features/resume-parser/pages/ResumeManagerPage").then((m) => ({ default: m.ResumeManagerPage })));
 const ResumeDetailPage = lazy(() => import("@/features/resume-parser/pages/ResumeDetailPage").then((m) => ({ default: m.ResumeDetailPage })));
 const ResumeVersionViewerPage = lazy(() => import("@/features/resume-parser/pages/ResumeVersionViewerPage").then((m) => ({ default: m.ResumeVersionViewerPage })));
 const ATSResumeGeneratorPage = lazy(() => import("@/features/ats-resume-generator/pages/ATSResumeGeneratorPage").then((m) => ({ default: m.ATSResumeGeneratorPage })));
 
-const SearchPage = lazy(() => import("@/features/search/pages/SearchPage").then((m) => ({ default: m.SearchPage })));
+const JobSearchHomePage = lazy(() => import("@/features/search/pages/JobSearchHomePage").then((m) => ({ default: m.JobSearchHomePage })));
 const JobDetailPage = lazy(() => import("@/features/search/pages/JobDetailPage").then((m) => ({ default: m.JobDetailPage })));
 const SavedJobsPage = lazy(() => import("@/features/search/pages/SavedJobsPage").then((m) => ({ default: m.SavedJobsPage })));
-const RecommendedJobsPage = lazy(() => import("@/features/search/pages/RecommendedJobsPage").then((m) => ({ default: m.RecommendedJobsPage })));
 const CompanyExplorerPage = lazy(() => import("@/features/job-ingestion/pages/CompanyExplorerPage").then((m) => ({ default: m.CompanyExplorerPage })));
 const CompanyDetailPage = lazy(() => import("@/features/job-ingestion/pages/CompanyDetailPage").then((m) => ({ default: m.CompanyDetailPage })));
 
@@ -100,18 +101,23 @@ export function AppRoutes() {
         </Route>
 
         <Route element={<ProtectedRoute />}>
+          {/* Bare (no AppShell sidebar) — a first-time user has nothing in
+              the nav yet to make sense of. */}
+          <Route path={paths.onboarding} element={<WelcomePage />} />
+          <Route path={paths.onboardingReview()} element={<ProfileReviewPage />} />
+
           <Route element={<AppShell />}>
-            <Route path={paths.dashboard} element={<DashboardPage />} />
+            <Route path={paths.dashboard} element={<Navigate to={paths.workspace} replace />} />
+            <Route path={paths.workspace} element={<WorkspacePage />} />
 
             <Route path={paths.resumes} element={<ResumeManagerPage />} />
             <Route path={paths.resumeDetail()} element={<ResumeDetailPage />} />
             <Route path={paths.resumeVersion()} element={<ResumeVersionViewerPage />} />
             <Route path={paths.atsGenerator} element={<ATSResumeGeneratorPage />} />
 
-            <Route path={paths.search} element={<SearchPage />} />
+            <Route path={paths.search} element={<JobSearchHomePage />} />
             <Route path={paths.jobDetail()} element={<JobDetailPage />} />
             <Route path={paths.savedJobs} element={<SavedJobsPage />} />
-            <Route path={paths.recommendedJobs} element={<RecommendedJobsPage />} />
             <Route path={paths.companies} element={<CompanyExplorerPage />} />
             <Route path={paths.companyDetail()} element={<CompanyDetailPage />} />
 

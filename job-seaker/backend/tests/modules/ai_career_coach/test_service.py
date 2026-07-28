@@ -154,6 +154,7 @@ class _FakeAIService:
         self._chat_responses = list(chat_responses or [])
         self.extract_calls: list[dict] = []
         self.chat_calls: list[dict] = []
+        self.model_name = "fake-ai-model"
 
     async def extract_structured(self, *, text, schema, system, max_tokens=8000):
         self.extract_calls.append({"text": text, "system": system})

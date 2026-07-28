@@ -26,6 +26,7 @@ from app.modules.job_ingestion.schemas import (
     CompanyRead,
     CompanyUpdateRequest,
     IngestionRunRead,
+    JobQualityReasonRead,
     JobRead,
     LocationRead,
     SkillRead,
@@ -41,6 +42,7 @@ def get_company_service(session: DBSessionDep) -> CompanyService:
         company_repository=CompanyRepository(session),
         intelligence_repository=CompanyIntelligenceRepository(session),
         ingestion_run_repository=IngestionRunRepository(session),
+        job_repository=JobRepository(session),
     )
 
 
@@ -52,8 +54,12 @@ CompanyServiceDep = Depends(get_company_service)
 JobServiceDep = Depends(get_job_service)
 
 
-def _company_read(company: Company) -> CompanyRead:
-    return CompanyRead.model_validate(company)
+async def _company_read(company: Company, service: CompanyService) -> CompanyRead:
+    avg_salary, avg_salary_currency = await service.get_avg_salary(company.id)
+    read = CompanyRead.model_validate(company)
+    read.avg_salary_yearly = avg_salary
+    read.avg_salary_currency = avg_salary_currency
+    return read
 
 
 def _job_read(job: Job) -> JobRead:
@@ -77,6 +83,16 @@ def _job_read(job: Job) -> JobRead:
         has_embedding=job.embedding is not None,
         created_at=job.created_at,
         updated_at=job.updated_at,
+        required_skills=job.required_skills,
+        preferred_skills=job.preferred_skills,
+        responsibilities=job.responsibilities,
+        benefits=job.benefits,
+        tech_stack=job.tech_stack,
+        seniority=job.seniority,
+        industry=job.industry,
+        department=job.department,
+        quality_score=job.quality_score,
+        quality_reasons=[JobQualityReasonRead(**reason) for reason in job.quality_reasons],
     )
 
 
@@ -85,7 +101,9 @@ async def register_company(
     payload: CompanyCreateRequest, service: CompanyService = CompanyServiceDep
 ) -> BaseResponse[CompanyRead]:
     company = await service.register_company(payload)
-    return BaseResponse(message="Company registered for ingestion.", data=_company_read(company))
+    return BaseResponse(
+        message="Company registered for ingestion.", data=await _company_read(company, service)
+    )
 
 
 @router.get("/companies", response_model=PaginatedResponse[CompanyRead])
@@ -96,7 +114,7 @@ async def list_companies(
         offset=pagination.offset, limit=pagination.page_size
     )
     return PaginatedResponse(
-        data=[_company_read(c) for c in companies],
+        data=[await _company_read(c, service) for c in companies],
         pagination=PaginationMeta(
             page=pagination.page,
             page_size=pagination.page_size,
@@ -111,7 +129,7 @@ async def get_company(
     company_id: uuid.UUID, service: CompanyService = CompanyServiceDep
 ) -> BaseResponse[CompanyRead]:
     company = await service.get_company(company_id)
-    return BaseResponse(data=_company_read(company))
+    return BaseResponse(data=await _company_read(company, service))
 
 
 @router.patch("/companies/{company_id}", response_model=BaseResponse[CompanyRead])
@@ -121,7 +139,7 @@ async def update_company(
     service: CompanyService = CompanyServiceDep,
 ) -> BaseResponse[CompanyRead]:
     company = await service.update_company(company_id, payload)
-    return BaseResponse(message="Company updated.", data=_company_read(company))
+    return BaseResponse(message="Company updated.", data=await _company_read(company, service))
 
 
 @router.delete("/companies/{company_id}", response_model=BaseResponse[None])

@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.logging import get_logger
+from app.modules.notification.service import NotificationService
 from app.modules.tracking.models import (
     Application,
     ApplicationNote,
@@ -54,10 +55,12 @@ class TrackingService:
         application_repository: ApplicationRepository,
         status_history_repository: ApplicationStatusHistoryRepository,
         note_repository: ApplicationNoteRepository,
+        notification_service: NotificationService,
     ) -> None:
         self.application_repository = application_repository
         self.status_history_repository = status_history_repository
         self.note_repository = note_repository
+        self.notification_service = notification_service
 
     # --- CRUD ---------------------------------------------------------------
 
@@ -147,8 +150,41 @@ class TrackingService:
             to_status=new_status,
             note=note,
         )
-        return await self.get_application(
+        result = await self.get_application(
             user_id=user_id, application_id=application_id, with_details=True
+        )
+        await self._notify_and_publish_status_change(
+            user_id=user_id, application=result, new_status=new_status
+        )
+        return result
+
+    async def _notify_and_publish_status_change(
+        self, *, user_id: uuid.UUID, application: Application, new_status: ApplicationStatus
+    ) -> None:
+        """Smart Trigger: Application Status Changed -> notify the user and
+        push a workspace timeline event. Analytics needs no invalidation —
+        `AnalyticsService` reads these tables live on every request.
+        """
+        from app.modules.auth.repository import AuthRepository
+        from app.modules.notification.models import NotificationEventType
+        from app.modules.workspace import realtime as workspace_realtime
+
+        user = await AuthRepository(self.application_repository.session).get(user_id)
+        await self.notification_service.notify(
+            user_id=user_id,
+            event_type=NotificationEventType.APPLICATION_STATUS_CHANGED,
+            title=f"{application.job_title} — status updated",
+            body=f"Your application at {application.company_name} is now '{new_status.value}'.",
+            data={"application_id": str(application.id), "status": new_status.value},
+            recipient_email=user.email if user else None,
+        )
+        await workspace_realtime.publish_workspace_event(
+            user_id,
+            {
+                "type": "application_status_changed",
+                "application_id": str(application.id),
+                "status": new_status.value,
+            },
         )
 
     async def get_status_history(

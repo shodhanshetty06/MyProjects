@@ -6,8 +6,10 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { loginSchema, type LoginFormValues } from "@/features/auth/schemas";
+import { resolvePostLoginPath } from "@/features/onboarding/api";
 import { errorMessage } from "@/lib/errorMessage";
 import { paths } from "@/routes/paths";
 
@@ -29,7 +31,7 @@ export function LoginPage() {
     setFormError(null);
     try {
       await login(values);
-      navigate(redirectTo ?? paths.dashboard, { replace: true });
+      navigate(redirectTo ?? (await resolvePostLoginPath()), { replace: true });
     } catch (error) {
       setFormError(errorMessage(error, "Couldn't log you in. Check your email and password."));
     }
@@ -64,9 +66,8 @@ export function LoginPage() {
               Forgot password?
             </Link>
           </div>
-          <Input
+          <PasswordInput
             id="password"
-            type="password"
             autoComplete="current-password"
             invalid={!!errors.password}
             {...register("password")}

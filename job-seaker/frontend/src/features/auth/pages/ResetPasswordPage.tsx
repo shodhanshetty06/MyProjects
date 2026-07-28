@@ -5,8 +5,8 @@ import { useForm } from "react-hook-form";
 import { Link } from "react-router-dom";
 
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
 import { NotConnectedNotice } from "@/components/ui/NotConnectedNotice";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { resetPasswordSchema, type ResetPasswordFormValues } from "@/features/auth/schemas";
 import { paths } from "@/routes/paths";
 
@@ -39,9 +39,8 @@ export function ResetPasswordPage() {
             <label htmlFor="password" className="text-xs font-medium text-ink-secondary">
               New password
             </label>
-            <Input
+            <PasswordInput
               id="password"
-              type="password"
               autoComplete="new-password"
               invalid={!!errors.password}
               {...register("password")}
@@ -53,9 +52,8 @@ export function ResetPasswordPage() {
             <label htmlFor="confirmPassword" className="text-xs font-medium text-ink-secondary">
               Confirm new password
             </label>
-            <Input
+            <PasswordInput
               id="confirmPassword"
-              type="password"
               autoComplete="new-password"
               invalid={!!errors.confirmPassword}
               {...register("confirmPassword")}

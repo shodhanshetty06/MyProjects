@@ -3,7 +3,7 @@
 Generic, reusable infra (not module-specific) — any module can inject a
 `CacheClient` via `app.api.deps.CacheDep` to add cache-aside behavior around
 expensive read paths, following the same "wrap the 3rd-party client behind
-our own thin class" convention used by `S3Storage`.
+our own thin class" convention used by `app.providers.storage.s3_provider.S3StorageProvider`.
 """
 
 from __future__ import annotations

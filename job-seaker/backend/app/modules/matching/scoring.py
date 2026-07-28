@@ -32,6 +32,45 @@ class SkillMatchResult:
     score: float  # 0..100
 
 
+def build_skill_checklist(
+    *, job_skills: Sequence[str], matched_skills: Sequence[str], missing_skills: Sequence[str]
+) -> list[tuple[str, bool]]:
+    """Interleave matched/missing skills into one ✔/✖ checklist ordered by
+    the job's own skill list (falls back to matched-then-missing order for
+    any skill not found on the job, e.g. a resume-side synonym), so callers
+    can render "Python ✔ FastAPI ✔ Docker ✔ AWS ✖ Kubernetes ✖" in the same
+    order the job posting lists its requirements.
+
+    Returns `(skill, matched)` tuples — pure/dataclass-free so both the
+    `search` and `matching` API surfaces can wrap it in their own response
+    schema without this module depending on either.
+    """
+    matched_set = {s.lower() for s in matched_skills}
+    missing_set = {s.lower() for s in missing_skills}
+    seen: set[str] = set()
+    checklist: list[tuple[str, bool]] = []
+
+    for skill in job_skills:
+        key = skill.lower()
+        if key in seen:
+            continue
+        if key in matched_set:
+            checklist.append((skill, True))
+            seen.add(key)
+        elif key in missing_set:
+            checklist.append((skill, False))
+            seen.add(key)
+
+    for skill in [*matched_skills, *missing_skills]:
+        key = skill.lower()
+        if key in seen:
+            continue
+        checklist.append((skill, key in matched_set))
+        seen.add(key)
+
+    return checklist
+
+
 def skill_match(
     resume_skills: Sequence[str], job_skills: Sequence[tuple[str, str]]
 ) -> SkillMatchResult:

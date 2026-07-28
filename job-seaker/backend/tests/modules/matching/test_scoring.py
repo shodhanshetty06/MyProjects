@@ -7,6 +7,7 @@ delegate scoring decisions to, mirroring `tests/modules/search/test_scoring.py`.
 from __future__ import annotations
 
 from app.modules.matching.scoring import (
+    build_skill_checklist,
     build_strengths_and_weaknesses,
     compute_match_score,
     country_boost,
@@ -18,6 +19,50 @@ from app.modules.matching.scoring import (
     work_mode_boost,
 )
 from app.modules.search.schemas import ExperienceLevel
+
+# --- build_skill_checklist ---------------------------------------------------------
+
+
+def test_skill_checklist_orders_by_job_skill_list() -> None:
+    checklist = build_skill_checklist(
+        job_skills=["Python", "FastAPI", "Docker", "AWS", "Kubernetes"],
+        matched_skills=["Python", "FastAPI", "Docker"],
+        missing_skills=["AWS", "Kubernetes"],
+    )
+    assert checklist == [
+        ("Python", True),
+        ("FastAPI", True),
+        ("Docker", True),
+        ("AWS", False),
+        ("Kubernetes", False),
+    ]
+
+
+def test_skill_checklist_case_insensitive_matching() -> None:
+    checklist = build_skill_checklist(
+        job_skills=["python"], matched_skills=["Python"], missing_skills=[]
+    )
+    assert checklist == [("python", True)]
+
+
+def test_skill_checklist_appends_skills_not_on_job_list() -> None:
+    # A matched/missing skill absent from the job's own skill list (e.g. a
+    # resume-side synonym) still shows up, just appended at the end.
+    checklist = build_skill_checklist(
+        job_skills=["Python"], matched_skills=["Python", "Django"], missing_skills=[]
+    )
+    assert checklist == [("Python", True), ("Django", True)]
+
+
+def test_skill_checklist_no_duplicates() -> None:
+    checklist = build_skill_checklist(
+        job_skills=["Python", "Python"], matched_skills=["Python"], missing_skills=[]
+    )
+    assert checklist == [("Python", True)]
+
+
+def test_skill_checklist_empty_inputs() -> None:
+    assert build_skill_checklist(job_skills=[], matched_skills=[], missing_skills=[]) == []
 
 # --- skill_match -----------------------------------------------------------------
 

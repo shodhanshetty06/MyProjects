@@ -18,6 +18,7 @@ from app.modules.job_ingestion.models import (
     Job,
     JobStatus,
     Location,
+    SalaryPeriod,
     Skill,
 )
 from app.repositories.base import BaseRepository
@@ -210,6 +211,32 @@ class JobRepository(BaseRepository[Job]):
             stmt = stmt.where(Job.status == status)
         result = await self.session.execute(stmt)
         return result.scalar_one()
+
+    async def get_average_yearly_salary(
+        self, *, company_id: uuid.UUID
+    ) -> tuple[float | None, str | None]:
+        """Average yearly salary for a company's currently-active postings.
+
+        Restricted to `SalaryPeriod.YEARLY` postings only — mixing in hourly
+        or monthly figures without a proper conversion would silently
+        corrupt the average, so those are excluded rather than guessed at.
+        Computed on read (never stored) so it can't go stale.
+        """
+        midpoint = func.avg(
+            (func.coalesce(Job.salary_min, Job.salary_max) + func.coalesce(Job.salary_max, Job.salary_min))
+            / 2.0
+        )
+        currency_mode = func.mode().within_group(Job.salary_currency)
+        stmt = select(midpoint, currency_mode).where(
+            Job.company_id == company_id,
+            Job.deleted_at.is_(None),
+            Job.status == JobStatus.ACTIVE,
+            Job.salary_period == SalaryPeriod.YEARLY,
+            (Job.salary_min.is_not(None)) | (Job.salary_max.is_not(None)),
+        )
+        result = await self.session.execute(stmt)
+        avg_value, currency = result.one()
+        return (float(avg_value) if avg_value is not None else None, currency)
 
     async def bulk_close_stale(self, *, company_id: uuid.UUID, seen_before: datetime) -> int:
         """Mark active jobs not observed in the latest crawl as closed.

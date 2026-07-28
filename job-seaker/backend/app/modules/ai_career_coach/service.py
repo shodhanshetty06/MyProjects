@@ -180,7 +180,7 @@ class AICareerCoachService:
             resume_version_id=resume_version_id,
             input_params=input_params,
             result=result,
-            model_used=self.settings.ANTHROPIC_MODEL,
+            model_used=self.ai_service.model_name,
         )
 
     # --- resume review + improvement suggestions --------------------------------------------
@@ -784,7 +784,7 @@ class AICareerCoachService:
             conversation_id=conversation.id,
             limit=self.settings.AI_CAREER_COACH_CHAT_MAX_HISTORY_MESSAGES,
         )
-        chat_messages = [{"role": m.role.value, "content": m.content} for m in history]
+        chat_messages = [{"role": str(m.role), "content": m.content} for m in history]
 
         system = _CHAT_SYSTEM_PROMPT
         profile_version = await self.resume_context_repository.get_current_version_for_user(

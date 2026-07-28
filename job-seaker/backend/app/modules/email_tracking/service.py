@@ -16,6 +16,7 @@ from app.core.config import get_settings
 from app.core.crypto import decrypt_token, encrypt_token
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.logging import get_logger
+from app.dependency_injection.providers import build_ai_service
 from app.integrations.cache import CacheClient
 from app.modules.email_tracking.classifier import classify_email
 from app.modules.email_tracking.gmail_api_client import GmailAPIClient, GmailMessage
@@ -74,9 +75,9 @@ class EmailTrackingService:
         self.tracking_service = tracking_service
         self.notification_service = notification_service
         self.cache = cache
-        self.ai_service = ai_service or AIService()
-        self.oauth_client = oauth_client or GmailOAuthClient()
         self.settings = get_settings()
+        self.ai_service = ai_service or build_ai_service(self.settings)
+        self.oauth_client = oauth_client or GmailOAuthClient()
 
     # --- OAuth connect/disconnect -------------------------------------------
 
@@ -319,9 +320,10 @@ class EmailTrackingService:
                 ),
             )
             matched_status_history_id = application.status_history[-1].id
-            await self._notify_status_changed(
-                account=account, application_id=match.application.id, new_status=new_status
-            )
+            # `TrackingService.change_status` now sends the
+            # APPLICATION_STATUS_CHANGED notification itself for every
+            # status change app-wide (see its Smart Trigger hook) — no
+            # separate notify call needed here anymore.
         except ValidationError:
             pass  # application already in this status — not an error, nothing to notify
 
@@ -362,18 +364,6 @@ class EmailTrackingService:
             match_status=match_status,
             matched_status_history_id=matched_status_history_id,
             raw_metadata=raw_metadata,
-        )
-
-    async def _notify_status_changed(
-        self, *, account: GmailAccount, application_id: uuid.UUID, new_status: ApplicationStatus
-    ) -> None:
-        await self.notification_service.notify(
-            user_id=account.user_id,
-            event_type=NotificationEventType.APPLICATION_STATUS_CHANGED,
-            title="Application status updated",
-            body=f"We detected a status change to '{new_status.value}' from a Gmail message.",
-            data={"application_id": str(application_id), "status": new_status.value},
-            recipient_email=account.email_address,
         )
 
     async def _notify_review_needed(self, *, account: GmailAccount, email: TrackedEmail) -> None:

@@ -1,39 +1,34 @@
-"""Unit tests for Claude email classification — the Anthropic client is
-monkeypatched exactly like `tests/modules/resume_parser/test_ai_service.py`,
+"""Unit tests for AI email classification — a fake `AIProvider` (the
+`app/interfaces/ai_provider.py` contract) stands in for a real LLM backend,
 so no network access or API key is required.
 """
 
 from __future__ import annotations
 
-import json
-from types import SimpleNamespace
-
 import pytest
 
+from app.core.config import get_settings
 from app.modules.email_tracking.classifier import classify_email
 from app.services.ai.service import AIService
 
 
-class _FakeAnthropicMessages:
-    def __init__(self, response) -> None:
-        self._response = response
+class _FakeAIProvider:
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
         self.calls: list[dict] = []
+        self.model_name = "fake-ai-model"
 
-    async def create(self, **kwargs):
-        self.calls.append(kwargs)
-        return self._response
+    async def extract_structured(self, *, text: str, schema: dict, system: str, max_tokens: int = 8000) -> dict:
+        self.calls.append({"text": text, "schema": schema, "system": system})
+        return self._payload
+
+    async def complete_chat(self, *, system: str, messages: list[dict[str, str]], max_tokens: int = 1500) -> str:
+        raise NotImplementedError
 
 
-class _FakeAnthropicClient:
-    def __init__(self, response) -> None:
-        self.messages = _FakeAnthropicMessages(response)
-
-
-def _text_response(payload: dict):
-    return SimpleNamespace(
-        stop_reason="end_turn",
-        content=[SimpleNamespace(type="text", text=json.dumps(payload))],
-    )
+def _ai_service(payload: dict) -> tuple[AIService, _FakeAIProvider]:
+    provider = _FakeAIProvider(payload)
+    return AIService(provider, get_settings()), provider
 
 
 @pytest.mark.asyncio
@@ -46,8 +41,7 @@ async def test_classify_email_parses_relevant_interview_email() -> None:
         "extracted_job_title": "Backend Engineer",
         "reasoning": "The email schedules an interview.",
     }
-    ai_service = AIService()
-    ai_service._anthropic_client = _FakeAnthropicClient(_text_response(payload))
+    ai_service, provider = _ai_service(payload)
 
     result = await classify_email(
         ai_service,
@@ -61,9 +55,8 @@ async def test_classify_email_parses_relevant_interview_email() -> None:
     assert result.confidence == 0.91
     assert result.extracted_company_name == "Acme Corp"
 
-    call = ai_service._anthropic_client.messages.calls[0]
-    assert "recruiting@acme.com" in call["messages"][0]["content"]
-    assert call["output_config"]["format"]["type"] == "json_schema"
+    call = provider.calls[0]
+    assert "recruiting@acme.com" in call["text"]
 
 
 @pytest.mark.asyncio
@@ -76,8 +69,7 @@ async def test_classify_email_maps_irrelevant_email_to_none() -> None:
         "extracted_job_title": None,
         "reasoning": "This is a newsletter, not a status update.",
     }
-    ai_service = AIService()
-    ai_service._anthropic_client = _FakeAnthropicClient(_text_response(payload))
+    ai_service, _ = _ai_service(payload)
 
     result = await classify_email(
         ai_service,

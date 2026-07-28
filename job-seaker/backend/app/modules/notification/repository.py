@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.notification.models import (
@@ -55,16 +55,21 @@ class NotificationRepository(BaseRepository[Notification]):
         return result.scalars().one_or_none()
 
     async def mark_all_read(self, *, user_id: uuid.UUID) -> int:
-        stmt = select(Notification).where(
-            Notification.user_id == user_id, Notification.read_at.is_(None)
+        """Single bulk `UPDATE` rather than fetching every unread row into
+        Python and setting `read_at` one at a time — that previously meant
+        one SELECT plus one UPDATE per unread notification (unbounded, up to
+        however many a user has let accumulate); this is always exactly one
+        statement, matching `MatchingRepository.mark_stale_before`'s
+        bulk-update convention.
+        """
+        stmt = (
+            update(Notification)
+            .where(Notification.user_id == user_id, Notification.read_at.is_(None))
+            .values(read_at=datetime.now(UTC))
         )
         result = await self.session.execute(stmt)
-        notifications = result.scalars().all()
-        now = datetime.now(UTC)
-        for notification in notifications:
-            notification.read_at = now
         await self.session.flush()
-        return len(notifications)
+        return result.rowcount or 0
 
 
 class NotificationPreferenceRepository(BaseRepository[NotificationPreference]):

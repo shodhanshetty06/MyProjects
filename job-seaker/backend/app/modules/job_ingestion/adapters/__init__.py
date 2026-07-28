@@ -11,10 +11,14 @@ from __future__ import annotations
 import httpx
 
 from app.core.exceptions import ValidationError
+from app.modules.job_ingestion.adapters.ashby import AshbyAdapter
 from app.modules.job_ingestion.adapters.base import BaseATSAdapter, JobPosting
 from app.modules.job_ingestion.adapters.custom_html import CustomHTMLAdapter
 from app.modules.job_ingestion.adapters.greenhouse import GreenhouseAdapter
+from app.modules.job_ingestion.adapters.jsonld import JobviteAdapter, JsonLdJobPostingAdapter
 from app.modules.job_ingestion.adapters.lever import LeverAdapter
+from app.modules.job_ingestion.adapters.smartrecruiters import SmartRecruitersAdapter
+from app.modules.job_ingestion.adapters.workable import WorkableAdapter
 from app.modules.job_ingestion.adapters.workday import WorkdayAdapter
 from app.modules.job_ingestion.models import ATSPlatform
 
@@ -22,6 +26,10 @@ _ADAPTERS: dict[ATSPlatform, type[BaseATSAdapter]] = {
     ATSPlatform.GREENHOUSE: GreenhouseAdapter,
     ATSPlatform.LEVER: LeverAdapter,
     ATSPlatform.WORKDAY: WorkdayAdapter,
+    ATSPlatform.ASHBY: AshbyAdapter,
+    ATSPlatform.WORKABLE: WorkableAdapter,
+    ATSPlatform.SMARTRECRUITERS: SmartRecruitersAdapter,
+    ATSPlatform.JOBVITE: JobviteAdapter,
     ATSPlatform.CUSTOM_HTML: CustomHTMLAdapter,
 }
 
@@ -54,4 +62,17 @@ def get_adapter(
     )
 
 
-__all__ = ["BaseATSAdapter", "JobPosting", "get_adapter"]
+__all__ = [
+    "BaseATSAdapter",
+    "JobPosting",
+    "get_adapter",
+    "AshbyAdapter",
+    "WorkableAdapter",
+    "SmartRecruitersAdapter",
+    "JobviteAdapter",
+    "JsonLdJobPostingAdapter",
+    "GreenhouseAdapter",
+    "LeverAdapter",
+    "WorkdayAdapter",
+    "CustomHTMLAdapter",
+]

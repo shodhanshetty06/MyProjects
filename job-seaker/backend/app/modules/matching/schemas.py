@@ -52,6 +52,18 @@ class ScoreBreakdown(BaseModel):
     boosts: dict[str, float | None]
 
 
+class SkillCheckItem(BaseModel):
+    """One row of the interleaved ✔/✖ skill checklist — see
+    `matching.scoring.build_skill_checklist`. Mirrors
+    `app.modules.search.schemas.SkillCheckItem`; kept as a separate schema
+    (not shared) since `matching` and `search` are independent API surfaces
+    that happen to expose the same shape.
+    """
+
+    skill: str
+    matched: bool
+
+
 class ResumeJobMatchRead(BaseModel):
     id: uuid.UUID
     resume_version_id: uuid.UUID
@@ -60,9 +72,11 @@ class ResumeJobMatchRead(BaseModel):
     match_score: float | None
     matched_skills: list[str]
     missing_skills: list[str]
+    skill_checklist: list[SkillCheckItem] = Field(default_factory=list)
     strengths: list[str]
     weaknesses: list[str]
     score_breakdown: ScoreBreakdown
+    ai_narrative: str | None = None
     job: JobSummary | None = None
     created_at: datetime
     updated_at: datetime

@@ -114,6 +114,44 @@ class ApplicationRepository(BaseRepository[Application]):
         result = await self.session.execute(stmt)
         return result.scalar_one()
 
+    async def list_applied_with_job(
+        self, *, user_id: uuid.UUID, offset: int, limit: int
+    ) -> tuple[Sequence[Application], int]:
+        """Applications the user tracked that are linked to an ingested
+        `job_ingestion.Job` (`job_id is not null`) — backs the Job Search
+        feed's `applied` tab (see `search.job_feed_service.JobFeedService`).
+        Manually-tracked applications with no `job_id` aren't feed-able.
+        """
+        base = select(Application).where(
+            Application.user_id == user_id,
+            Application.deleted_at.is_(None),
+            Application.job_id.is_not(None),
+        )
+        stmt = base.order_by(Application.applied_at.desc()).offset(offset).limit(limit)
+        result = await self.session.execute(stmt)
+        applications = result.scalars().all()
+
+        count_stmt = select(func.count()).select_from(base.subquery())
+        total = (await self.session.execute(count_stmt)).scalar_one()
+        return applications, total
+
+    async def get_status_by_job_ids(
+        self, *, user_id: uuid.UUID, job_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, ApplicationStatus]:
+        """Batch `job_id -> latest application status` for `is_applied`/
+        `application_status` enrichment — one query per feed page instead of
+        one query per job card.
+        """
+        if not job_ids:
+            return {}
+        stmt = select(Application.job_id, Application.status).where(
+            Application.user_id == user_id,
+            Application.deleted_at.is_(None),
+            Application.job_id.in_(job_ids),
+        )
+        result = await self.session.execute(stmt)
+        return {row[0]: row[1] for row in result.all()}
+
     async def list_recent(self, *, user_id: uuid.UUID, limit: int) -> Sequence[Application]:
         stmt = (
             select(Application)

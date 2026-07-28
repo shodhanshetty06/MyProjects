@@ -99,17 +99,19 @@ def _build_notification_service(session: AsyncSession) -> NotificationService:
 
 
 def _build_email_tracking_service(session: AsyncSession) -> EmailTrackingService:
+    notification_service = _build_notification_service(session)
     tracking_service = TrackingService(
         application_repository=ApplicationRepository(session),
         status_history_repository=ApplicationStatusHistoryRepository(session),
         note_repository=ApplicationNoteRepository(session),
+        notification_service=notification_service,
     )
     return EmailTrackingService(
         gmail_account_repository=GmailAccountRepository(session),
         tracked_email_repository=TrackedEmailRepository(session),
         application_repository=ApplicationRepository(session),
         tracking_service=tracking_service,
-        notification_service=_build_notification_service(session),
+        notification_service=notification_service,
         # Unused in this code path (only OAuth connect/callback touches the
         # cache) — constructed anyway to satisfy the constructor, matching
         # the router's dependency-injection shape.

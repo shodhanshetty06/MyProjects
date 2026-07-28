@@ -2,8 +2,8 @@
 classify -> match -> update-status pipeline, exercised against a real DB
 session (same `AsyncSessionLocal` seeding convention used by other modules'
 router tests, e.g. `tests/modules/ats_resume_generator/test_router.py`).
-Claude classification is monkeypatched (no network/API key required),
-matching `tests/modules/resume_parser/test_ai_service.py`'s convention.
+AI classification is faked via a stand-in `AIProvider` (no network/API key
+required).
 
 Needs a reachable Postgres + Redis with migrations applied:
 
@@ -14,11 +14,10 @@ Needs a reachable Postgres + Redis with migrations applied:
 
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import UTC, datetime
-from types import SimpleNamespace
 
+from app.core.config import get_settings
 from app.db.session import AsyncSessionLocal
 from app.integrations.cache import CacheClient
 from app.integrations.redis_client import get_redis_client
@@ -41,30 +40,20 @@ from app.modules.tracking.service import TrackingService
 from app.services.ai.service import AIService
 
 
-class _FakeAnthropicMessages:
-    def __init__(self, response) -> None:
-        self._response = response
+class _FakeAIProvider:
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+        self.model_name = "fake-ai-model"
 
-    async def create(self, **kwargs):
-        return self._response
+    async def extract_structured(self, *, text: str, schema: dict, system: str, max_tokens: int = 8000) -> dict:
+        return self._payload
 
-
-class _FakeAnthropicClient:
-    def __init__(self, response) -> None:
-        self.messages = _FakeAnthropicMessages(response)
-
-
-def _classification_response(payload: dict):
-    return SimpleNamespace(
-        stop_reason="end_turn",
-        content=[SimpleNamespace(type="text", text=json.dumps(payload))],
-    )
+    async def complete_chat(self, *, system: str, messages: list[dict[str, str]], max_tokens: int = 1500) -> str:
+        raise NotImplementedError
 
 
 def _fake_ai_service(payload: dict) -> AIService:
-    ai_service = AIService()
-    ai_service._anthropic_client = _FakeAnthropicClient(_classification_response(payload))
-    return ai_service
+    return AIService(_FakeAIProvider(payload), get_settings())
 
 
 async def _seed_gmail_account(*, user_id: uuid.UUID) -> GmailAccount:
@@ -127,14 +116,15 @@ def _message(*, message_id: str, sender: str, subject: str, snippet: str) -> Gma
 
 
 async def _build_service(session, *, ai_service: AIService) -> EmailTrackingService:
+    notification_service = NotificationService(
+        repository=NotificationRepository(session),
+        preference_repository=NotificationPreferenceRepository(session),
+    )
     tracking_service = TrackingService(
         application_repository=ApplicationRepository(session),
         status_history_repository=ApplicationStatusHistoryRepository(session),
         note_repository=ApplicationNoteRepository(session),
-    )
-    notification_service = NotificationService(
-        repository=NotificationRepository(session),
-        preference_repository=NotificationPreferenceRepository(session),
+        notification_service=notification_service,
     )
     return EmailTrackingService(
         gmail_account_repository=GmailAccountRepository(session),

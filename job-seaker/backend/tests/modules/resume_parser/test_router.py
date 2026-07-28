@@ -20,7 +20,7 @@ import uuid
 import pytest
 from httpx import AsyncClient
 
-from app.api.deps import get_s3_storage
+from app.api.deps import get_storage_provider
 from app.core.security import create_access_token
 from app.main import app
 from app.modules.resume_parser.tasks import parse_resume_task
@@ -29,8 +29,8 @@ PDF_BYTES = b"%PDF-1.4\n%fake-but-good-enough-for-content-type-validation\n%%EOF
 DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
-class _FakeS3Storage:
-    """In-memory stand-in for `S3Storage` — no AWS credentials required."""
+class _FakeStorageProvider:
+    """In-memory stand-in for a `StorageProvider` — no cloud credentials required."""
 
     def __init__(self) -> None:
         self.bucket = "test-bucket"
@@ -45,21 +45,21 @@ class _FakeS3Storage:
     def delete_object(self, key: str) -> None:
         self._objects.pop(key, None)
 
-    def generate_presigned_download_url(self, key: str, expires_in: int = 3600) -> str:
+    def get_download_url(self, key: str, expires_in: int = 3600) -> str:
         return f"https://example-bucket.s3.amazonaws.com/{key}?X-Fake-Signature=1"
 
 
 @pytest.fixture(autouse=True)
 def _fake_external_dependencies(monkeypatch: pytest.MonkeyPatch):
-    """Replace S3 with an in-memory fake and no-op the parsing Celery task.
+    """Replace storage with an in-memory fake and no-op the parsing Celery task.
 
-    Without this, `upload_resume` would try to reach real AWS and a real
-    Redis-backed broker.
+    Without this, `upload_resume` would try to reach a real storage backend
+    and a real Redis-backed broker.
     """
-    app.dependency_overrides[get_s3_storage] = lambda: _FakeS3Storage()
+    app.dependency_overrides[get_storage_provider] = lambda: _FakeStorageProvider()
     monkeypatch.setattr(parse_resume_task, "delay", lambda *args, **kwargs: None)
     yield
-    app.dependency_overrides.pop(get_s3_storage, None)
+    app.dependency_overrides.pop(get_storage_provider, None)
 
 
 def _user_header() -> dict[str, str]:

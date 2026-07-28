@@ -32,6 +32,8 @@ class NotificationEventType(str, enum.Enum):
     APPLICATION_STATUS_CHANGED = "application_status_changed"
     EMAIL_REVIEW_NEEDED = "email_review_needed"
     GMAIL_REAUTH_REQUIRED = "gmail_reauth_required"
+    RESUME_READY = "resume_ready"
+    NEW_MATCHING_JOB = "new_matching_job"
 
 
 class NotificationChannel(str, enum.Enum):

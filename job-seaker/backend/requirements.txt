@@ -14,7 +14,8 @@ pgvector==0.3.6
 redis==5.2.1
 celery==5.4.0
 
-# AWS S3
+# STORAGE_PROVIDER=s3 / EMAIL_PROVIDER=ses (STORAGE_PROVIDER=local is the
+# default and needs no cloud dependency — see app/factories/storage_provider_factory.py)
 boto3==1.35.97
 
 # Auth
@@ -28,9 +29,21 @@ bcrypt==4.0.1
 python-multipart==0.0.20
 email-validator==2.2.0
 
-# AI (resume parsing + embeddings)
+# AI providers (AI_PROVIDER=ollama is the default; the rest are selectable
+# via .env without code changes — see app/factories/ai_provider_factory.py)
+ollama==0.4.7
 anthropic==0.69.0
+openai==1.59.6
+google-generativeai==0.8.3
+groq==0.13.1
+tenacity==9.0.0
+
+# Embedding providers (EMBEDDING_PROVIDER=local is the default — runs fully
+# offline; see app/factories/embedding_provider_factory.py)
+sentence-transformers==3.3.1
 voyageai==0.3.2
+
+# Resume file parsing
 pypdf==5.1.0
 python-docx==1.1.2
 
@@ -39,7 +52,9 @@ httpx==0.28.1
 beautifulsoup4==4.12.3
 lxml==5.3.0
 
-# ATS resume generator (PDF export — DOCX already covered by python-docx above)
+# Analytics report export (PDF export via reportlab; ATS resume DOCX/PDF now
+# goes through python-docx + LibreOffice headless conversion — see
+# ats_resume_generator/pdf_converter.py)
 reportlab==4.2.5
 
 # Auto Apply (Greenhouse/Lever submit over httpx+beautifulsoup above; Workday

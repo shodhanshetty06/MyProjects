@@ -12,7 +12,7 @@ import uuid
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import CurrentUserIdDep, DBSessionDep, S3StorageDep
+from app.api.deps import CurrentUserIdDep, DBSessionDep, StorageProviderDep
 from app.modules.auto_apply.models import ApplicantProfile, AutoApplyAttempt, AutoApplyTask
 from app.modules.auto_apply.repository import (
     ApplicantProfileRepository,
@@ -36,12 +36,14 @@ from app.schemas.common import BaseResponse, PaginatedResponse, PaginationMeta, 
 router = APIRouter(prefix="/auto-apply", tags=["Auto Apply"])
 
 
-def get_auto_apply_service(session: DBSessionDep, s3_storage: S3StorageDep) -> AutoApplyService:
+def get_auto_apply_service(
+    session: DBSessionDep, storage_provider: StorageProviderDep
+) -> AutoApplyService:
     return AutoApplyService(
         profile_repository=ApplicantProfileRepository(session),
         task_repository=AutoApplyTaskRepository(session),
         attempt_repository=AutoApplyAttemptRepository(session),
-        s3_storage=s3_storage,
+        storage_provider=storage_provider,
     )
 
 
@@ -137,6 +139,20 @@ async def retry_task(
 ) -> BaseResponse[AutoApplyTaskRead]:
     task = await service.retry_task(user_id=user_id, task_id=task_id)
     return BaseResponse(message="Auto-apply task re-queued.", data=_task_read(task))
+
+
+@router.post("/tasks/{task_id}/approve", response_model=BaseResponse[AutoApplyTaskRead])
+async def approve_task(
+    task_id: uuid.UUID, user_id: CurrentUserIdDep, service: AutoApplyService = ServiceDep
+) -> BaseResponse[AutoApplyTaskRead]:
+    """Submits a `PENDING` task the Daily AI Agent staged (see
+    `daily_agent` module) — the only path that ever actually submits an
+    agent-prepared application. Manually-created tasks (`POST /tasks`) are
+    never `PENDING`, so this endpoint is a no-op path for them (they'll hit
+    the "not pending approval" conflict).
+    """
+    task = await service.approve_task(user_id=user_id, task_id=task_id)
+    return BaseResponse(message="Auto-apply task approved and queued for submission.", data=_task_read(task))
 
 
 @router.post("/tasks/{task_id}/cancel", response_model=BaseResponse[AutoApplyTaskRead])

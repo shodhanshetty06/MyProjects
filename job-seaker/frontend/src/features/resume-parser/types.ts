@@ -16,13 +16,16 @@ export interface ExperienceItem {
   highlights: string[];
 }
 
+export type GpaType = "gpa" | "cgpa" | "percentage";
+
 export interface EducationItem {
   institution: string;
   degree?: string | null;
   field_of_study?: string | null;
   start_date?: string | null;
   end_date?: string | null;
-  gpa?: number | null;
+  gpa?: string | null;
+  gpa_type?: GpaType | null;
 }
 
 export interface ProjectItem {
@@ -45,7 +48,18 @@ export interface LanguageItem {
   proficiency?: string | null;
 }
 
+export interface ContactInfo {
+  full_name: string;
+  phone?: string | null;
+  email?: string | null;
+  linkedin_url?: string | null;
+  github_url?: string | null;
+  portfolio_url?: string | null;
+  location?: string | null;
+}
+
 export interface ParsedResumeData {
+  contact: ContactInfo;
   summary: string | null;
   skills: string[];
   experience: ExperienceItem[];

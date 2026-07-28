@@ -12,10 +12,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Sequence
 
+from sqlalchemy.orm.attributes import set_committed_value
+
 from app.core.config import get_settings
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
-from app.integrations.s3_client import S3Storage
+from app.interfaces.storage_provider import StorageProvider
 from app.modules.ats_resume_generator import diffing
 from app.modules.ats_resume_generator.models import (
     ATSFileFormat,
@@ -23,6 +25,7 @@ from app.modules.ats_resume_generator.models import (
     ATSResumeVersion,
     ATSVersionStatus,
 )
+from app.modules.ats_resume_generator.templates import TEMPLATES, DEFAULT_TEMPLATE_ID
 from app.modules.ats_resume_generator.repository import (
     ATSResumeRepository,
     ATSResumeVersionRepository,
@@ -47,11 +50,11 @@ class ATSResumeGeneratorService:
         self,
         ats_resume_repository: ATSResumeRepository,
         version_repository: ATSResumeVersionRepository,
-        s3_storage: S3Storage,
+        storage_provider: StorageProvider,
     ) -> None:
         self.ats_resume_repository = ats_resume_repository
         self.version_repository = version_repository
-        self.s3_storage = s3_storage
+        self.storage_provider = storage_provider
         self.settings = get_settings()
 
     async def _resolve_source_version(
@@ -95,6 +98,7 @@ class ATSResumeGeneratorService:
             source=source,
             job_description=payload.job_description,
             version_number=1,
+            template_id=payload.template_id,
         )
         await self.version_repository.set_current(ats_resume_id=ats_resume.id, version_id=version.id)
 
@@ -115,6 +119,7 @@ class ATSResumeGeneratorService:
 
         resume_version_id = payload.resume_version_id or current.source_resume_version_id
         job_description = payload.job_description or current.job_description
+        template_id = payload.template_id or current.template_id
         source = await self._resolve_source_version(
             user_id=user_id, resume_version_id=resume_version_id
         )
@@ -127,6 +132,7 @@ class ATSResumeGeneratorService:
             source=source,
             job_description=job_description,
             version_number=version_number,
+            template_id=template_id,
         )
         await self.version_repository.set_current(ats_resume_id=ats_resume.id, version_id=version.id)
 
@@ -150,16 +156,21 @@ class ATSResumeGeneratorService:
         source: ResumeVersion,
         job_description: str,
         version_number: int,
+        template_id: str = DEFAULT_TEMPLATE_ID,
     ) -> ATSResumeVersion:
         parsed = source.parsed_data
         assert parsed is not None  # guaranteed by `_resolve_source_version`
-        return await self.version_repository.create(
+        if template_id not in TEMPLATES:
+            raise ValidationError(f"Unknown template '{template_id}'.")
+        version = await self.version_repository.create(
             ats_resume_id=ats_resume.id,
             version_number=version_number,
             is_current=False,
             status=ATSVersionStatus.PENDING,
             source_resume_version_id=source.id,
             job_description=job_description,
+            template_id=template_id,
+            contact=parsed.contact,
             experience=parsed.experience,
             education=parsed.education,
             certifications=parsed.certifications,
@@ -169,6 +180,14 @@ class ATSResumeGeneratorService:
             original_skills=parsed.skills,
             original_projects=parsed.projects,
         )
+        # A brand-new version has no files yet. Once `create()` flushes, the
+        # row is persistent, so any touch of the `files` relationship
+        # (even assigning to it, which reads the old value first) makes
+        # SQLAlchemy lazy-load it — which raises MissingGreenlet under
+        # AsyncSession. `set_committed_value` marks the collection as
+        # already-loaded-and-empty without a DB round trip.
+        set_committed_value(version, "files", [])
+        return version
 
     def _enqueue_optimize(self, version_id: uuid.UUID) -> None:
         from app.modules.ats_resume_generator.tasks import optimize_ats_resume_task
@@ -253,6 +272,33 @@ class ATSResumeGeneratorService:
         version.is_current = True
         return version
 
+    async def set_template(
+        self,
+        *,
+        user_id: uuid.UUID,
+        ats_resume_id: uuid.UUID,
+        version_id: uuid.UUID,
+        template_id: str,
+    ) -> ATSResumeVersion:
+        """Switch a version's visual template. Only re-renders files — the
+        content is unchanged, so this never re-runs the Claude optimize
+        pass, unlike `create_new_version`."""
+        if template_id not in TEMPLATES:
+            raise ValidationError(f"Unknown template '{template_id}'.")
+        version = await self.get_version(
+            user_id=user_id, ats_resume_id=ats_resume_id, version_id=version_id
+        )
+        version = await self.version_repository.update(
+            version, template_id=template_id, status=ATSVersionStatus.GENERATING_FILES
+        )
+        self._enqueue_generate_files(version.id)
+        return version
+
+    def _enqueue_generate_files(self, version_id: uuid.UUID) -> None:
+        from app.modules.ats_resume_generator.tasks import generate_ats_resume_files_task
+
+        generate_ats_resume_files_task.delay(str(version_id))
+
     # --- downloads ---------------------------------------------------------------------
 
     async def get_download_url(
@@ -271,7 +317,7 @@ class ATSResumeGeneratorService:
             raise NotFoundError(
                 f"No {format.value.upper()} file has been generated for this version yet."
             )
-        return self.s3_storage.generate_presigned_download_url(file_row.s3_key)
+        return self.storage_provider.get_download_url(file_row.s3_key)
 
     # --- diff view ---------------------------------------------------------------------
 

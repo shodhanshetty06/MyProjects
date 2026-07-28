@@ -50,6 +50,18 @@ async def upsert_preferences(
     service: MatchingService = ServiceDep,
 ) -> BaseResponse[MatchPreferenceRead]:
     preference = await service.upsert_preferences(user_id=user_id, data=payload)
+
+    # Smart Trigger: User Preferences Updated -> re-rank existing matches
+    # (rule-boost depends on preferences) -> refresh recommendations. Reuses
+    # the same compute->refresh chain a fresh resume upload triggers.
+    resume_version = await service.repository.get_current_resume_version_for_user(
+        user_id=user_id
+    )
+    if resume_version is not None and resume_version.embedding is not None:
+        await service.enqueue_batch_compute(
+            user_id=user_id, resume_version_id=resume_version.id
+        )
+
     return BaseResponse(
         message="Match preferences saved.", data=MatchPreferenceRead.model_validate(preference)
     )

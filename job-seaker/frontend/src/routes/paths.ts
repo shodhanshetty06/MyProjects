@@ -20,11 +20,14 @@ export const paths = {
 
   // authenticated app
   dashboard: "/dashboard",
+  onboarding: "/onboarding",
+  onboardingReview: (resumeId = ":resumeId", versionId = ":versionId") =>
+    `/onboarding/review/${resumeId}/${versionId}`,
+  workspace: "/workspace",
 
   search: "/jobs",
   jobDetail: (jobId = ":jobId") => `/jobs/${jobId}`,
   savedJobs: "/jobs/saved",
-  recommendedJobs: "/jobs/recommended",
   companies: "/companies",
   companyDetail: (companyId = ":companyId") => `/companies/${companyId}`,
 

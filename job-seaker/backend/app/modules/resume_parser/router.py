@@ -6,9 +6,13 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 
-from app.api.deps import CurrentUserIdDep, DBSessionDep, S3StorageDep
+from app.api.deps import CurrentUserIdDep, DBSessionDep, StorageProviderDep
 from app.modules.resume_parser.models import Resume, ResumeVersion
-from app.modules.resume_parser.repository import ResumeRepository, ResumeVersionRepository
+from app.modules.resume_parser.repository import (
+    ResumeParsedDataRepository,
+    ResumeRepository,
+    ResumeVersionRepository,
+)
 from app.modules.resume_parser.schemas import (
     ParsedResumeData,
     ResumeRead,
@@ -22,11 +26,14 @@ from app.schemas.common import BaseResponse, PaginatedResponse, PaginationMeta, 
 router = APIRouter(prefix="/resumes", tags=["Resume Parser"])
 
 
-def get_resume_parser_service(session: DBSessionDep, s3_storage: S3StorageDep) -> ResumeParserService:
+def get_resume_parser_service(
+    session: DBSessionDep, storage_provider: StorageProviderDep
+) -> ResumeParserService:
     return ResumeParserService(
         resume_repository=ResumeRepository(session),
         version_repository=ResumeVersionRepository(session),
-        s3_storage=s3_storage,
+        storage_provider=storage_provider,
+        parsed_data_repository=ResumeParsedDataRepository(session),
     )
 
 
@@ -52,6 +59,7 @@ def _resume_read(resume: Resume, current_version: ResumeVersion | None = None) -
 def _version_detail(version: ResumeVersion) -> ResumeVersionDetail:
     parsed = (
         ParsedResumeData(
+            contact=version.parsed_data.contact,
             summary=version.parsed_data.summary,
             skills=version.parsed_data.skills,
             experience=version.parsed_data.experience,
@@ -182,6 +190,26 @@ async def get_resume_version(
         user_id=user_id, resume_id=resume_id, version_id=version_id, with_details=True
     )
     return BaseResponse(data=_version_detail(version))
+
+
+@router.patch(
+    "/{resume_id}/versions/{version_id}/parsed-data", response_model=BaseResponse[ResumeVersionDetail]
+)
+async def update_parsed_data(
+    resume_id: uuid.UUID,
+    version_id: uuid.UUID,
+    payload: ParsedResumeData,
+    user_id: CurrentUserIdDep,
+    service: ResumeParserService = ServiceDep,
+) -> BaseResponse[ResumeVersionDetail]:
+    """Saves the Profile Review screen's edits over the AI-extracted resume
+    data — accepted values pass through unchanged, edited/deleted/added
+    entries land here as the corrected `ParsedResumeData` shape.
+    """
+    version = await service.update_parsed_data(
+        user_id=user_id, resume_id=resume_id, version_id=version_id, data=payload
+    )
+    return BaseResponse(message="Profile updated.", data=_version_detail(version))
 
 
 @router.put(

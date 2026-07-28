@@ -28,8 +28,9 @@ from datetime import UTC, datetime
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.session import AsyncSessionLocal
+from app.dependency_injection.container import get_container
 from app.integrations.http_client import build_http_client
-from app.integrations.s3_client import S3Storage, get_s3_client
+from app.interfaces.storage_provider import StorageProvider
 from app.modules.auto_apply import field_mapping, resume_selection, validation
 from app.modules.auto_apply.adapters import get_apply_adapter
 from app.modules.auto_apply.adapters.base import ApplicationField, ApplyResult, ResumeAttachment
@@ -88,7 +89,7 @@ def _map_and_validate(
 
 async def _persist_apply_result(
     *,
-    s3_storage: S3Storage,
+    storage_provider: StorageProvider,
     attempt_repo: AutoApplyAttemptRepository,
     attempt_id: uuid.UUID,
     user_id: uuid.UUID,
@@ -97,9 +98,9 @@ async def _persist_apply_result(
 ) -> None:
     for index, shot in enumerate(result.screenshots):
         key = f"auto-apply/{user_id}/{task_id}/{attempt_id}/{shot.stage}-{index}.png"
-        s3_storage.upload_bytes(shot.content, key)
+        storage_provider.upload_bytes(shot.content, key)
         await attempt_repo.add_screenshot(
-            attempt_id=attempt_id, stage=shot.stage, s3_bucket=s3_storage.bucket, s3_key=key
+            attempt_id=attempt_id, stage=shot.stage, s3_bucket=storage_provider.bucket, s3_key=key
         )
     for entry in result.logs:
         await attempt_repo.add_log_entry(
@@ -222,7 +223,7 @@ async def _submit_application(task_id: uuid.UUID, *, retry_count: int) -> None:
         await session.commit()
         attempt_id = attempt.id
 
-        s3_storage = S3Storage(client=get_s3_client())
+        storage_provider = get_container().resolve("storage_provider")
 
         try:
             job = await task_repo.get_job_with_company(job_id=job_id) if job_id else None
@@ -240,7 +241,7 @@ async def _submit_application(task_id: uuid.UUID, *, retry_count: int) -> None:
             resume = ResumeAttachment(
                 filename=_resume_filename(selection.content_type),
                 content_type=selection.content_type,
-                content=s3_storage.download_bytes(selection.s3_key),
+                content=storage_provider.download_bytes(selection.s3_key),
             )
 
             intelligence = job.company.intelligence if job and job.company else None
@@ -303,7 +304,7 @@ async def _submit_application(task_id: uuid.UUID, *, retry_count: int) -> None:
                 result = await adapter.apply(field_values=mapping_result.mapped_values, resume=resume)
 
             await _persist_apply_result(
-                s3_storage=s3_storage,
+                storage_provider=storage_provider,
                 attempt_repo=attempt_repo,
                 attempt_id=attempt_id,
                 user_id=user_id,

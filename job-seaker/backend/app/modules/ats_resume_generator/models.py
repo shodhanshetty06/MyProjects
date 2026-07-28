@@ -9,14 +9,20 @@ Domain shape:
                         set-current bookkeeping as `resume_parser.ResumeVersion`).
 
                         Only `summary`, `skills`, and `projects` are ever
-                        sent to Claude for rewriting — `experience`,
-                        `education`, `certifications`, `languages`, and
-                        `achievements` are copied verbatim from the source
-                        resume's parsed data and never touched by the model,
-                        so the generator can never fabricate work history.
+                        sent to Claude for rewriting (Claude additionally
+                        regroups `skills` into `grouped_skills`, a strict
+                        repartition of the same list) — `contact`,
+                        `experience`, `education`, `certifications`,
+                        `languages`, and `achievements` are copied verbatim
+                        from the source resume's parsed data and never
+                        touched by the model, so the generator can never
+                        fabricate work history or contact details.
                         `original_*` snapshots are kept alongside `optimized_*`
                         so a version can be diffed against its own source
-                        without a second DB round-trip.
+                        without a second DB round-trip. `template_id`
+                        selects the visual template used to render the
+                        DOCX/PDF (see `templates.py`) — a pure rendering
+                        choice, independent of optimization.
     ATSResumeFile    — one generated file artifact (DOCX or PDF) for a
                         version, stored in S3. At most one row per
                         `(version, format)`.
@@ -97,6 +103,7 @@ class ATSResumeVersion(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixi
 
     # Verbatim sections copied from the source resume's parsed data — never
     # sent to or rewritten by Claude, so work history can't be fabricated.
+    contact: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     experience: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     education: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     certifications: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
@@ -111,6 +118,20 @@ class ATSResumeVersion(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixi
     optimized_skills: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     original_projects: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     optimized_projects: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+
+    # AI-organized skill categories (e.g. [{"category": "Languages", "skills": [...]}])
+    # — a strict regrouping of `optimized_skills`, never introducing new skills.
+    grouped_skills: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+
+    # Selected visual template for DOCX/PDF rendering — see
+    # `ats_resume_generator.templates.TEMPLATES`. Purely a rendering choice;
+    # switching it re-triggers file generation only, never re-optimization.
+    template_id: Mapped[str] = mapped_column(String(50), nullable=False, default="modern_ats")
+
+    # Non-blocking issues from the pre-export validator (see `validation.py`),
+    # e.g. a project with fewer than 3 bullet points. Populated during file
+    # generation; an empty list means nothing to flag.
+    validation_warnings: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
 
     keywords: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     matched_keywords: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)

@@ -6,6 +6,7 @@ import type {
   ATSResumeCreateRequest,
   ATSResumeDownloadResponse,
   ATSResumeRead,
+  ATSResumeTemplateSummary,
   ATSResumeVersionCreateRequest,
   ATSResumeVersionDetail,
   ATSResumeVersionDiff,
@@ -144,6 +145,28 @@ export async function getATSResumeVersionDiff(
     { ...authHeaders(userId), params: { compare_to: compareTo } },
   );
   return response.data.data as ATSResumeVersionDiff;
+}
+
+export async function listATSResumeTemplates(userId: string): Promise<ATSResumeTemplateSummary[]> {
+  const response = await apiClient.get<BaseResponse<ATSResumeTemplateSummary[]>>(
+    "/ats-resumes/templates",
+    authHeaders(userId),
+  );
+  return response.data.data ?? [];
+}
+
+export async function setATSResumeVersionTemplate(
+  userId: string,
+  atsResumeId: string,
+  versionId: string,
+  templateId: string,
+): Promise<ATSResumeVersionSummary> {
+  const response = await apiClient.put<BaseResponse<ATSResumeVersionSummary>>(
+    `/ats-resumes/${atsResumeId}/versions/${versionId}/template`,
+    { template_id: templateId },
+    authHeaders(userId),
+  );
+  return response.data.data as ATSResumeVersionSummary;
 }
 
 export async function getATSResumeDownloadUrl(

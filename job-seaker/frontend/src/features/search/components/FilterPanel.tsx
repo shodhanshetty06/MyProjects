@@ -1,8 +1,11 @@
+import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
+import { useEffect, useRef } from "react";
 
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
+import { useAuth } from "@/features/auth";
 import {
   DATE_POSTED_OPTIONS,
   EMPLOYMENT_TYPES,
@@ -14,11 +17,23 @@ import {
   type SearchFiltersParams,
   type WorkMode,
 } from "@/features/search/types";
+import { getPreferences } from "@/features/matching/api";
 import { formatEnumLabel } from "@/lib/format";
 
 interface FilterPanelProps {
   filters: SearchFiltersParams;
   onChange: (filters: SearchFiltersParams) => void;
+}
+
+/** Filter keys that count as "the user has touched filters" — if all of these are empty, it's safe to pre-populate from preferences. */
+function hasActiveFilters(filters: SearchFiltersParams): boolean {
+  return Boolean(
+    filters.work_mode?.length ||
+      filters.employment_type?.length ||
+      filters.experience_level?.length ||
+      filters.salary_min ||
+      filters.country?.length,
+  );
 }
 
 function toggleInArray<T>(arr: T[] | undefined, value: T): T[] {
@@ -33,7 +48,58 @@ const DATE_POSTED_LABELS: Record<DatePosted, string> = {
   last_30d: "Past month",
 };
 
+/**
+ * `MatchPreference` stores `years_of_experience` (a number), not an
+ * `ExperienceLevel` enum value — this is a minimal, documented heuristic
+ * bucketing so the filter panel can still pre-populate "Experience level"
+ * from it, not a field that exists 1:1 on the backend model.
+ */
+function yearsToExperienceLevel(years: number | null): ExperienceLevel | null {
+  if (years == null) return null;
+  if (years < 1) return "internship";
+  if (years < 2) return "entry";
+  if (years < 5) return "mid";
+  if (years < 8) return "senior";
+  if (years < 12) return "lead";
+  return "executive";
+}
+
 export function FilterPanel({ filters, onChange }: FilterPanelProps) {
+  const { user } = useAuth();
+  const appliedPrefillRef = useRef(false);
+
+  const preferencesQuery = useQuery({
+    queryKey: ["match-preferences", user?.id],
+    queryFn: () => getPreferences(user!.id),
+    enabled: !!user?.id,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+
+  // Pre-populate from the user's match preferences on first mount, only if
+  // filters are still empty/default — user edits after that always win,
+  // this never overwrites a filter the user already touched.
+  useEffect(() => {
+    if (appliedPrefillRef.current) return;
+    if (!preferencesQuery.data) return;
+    if (hasActiveFilters(filters)) {
+      appliedPrefillRef.current = true;
+      return;
+    }
+    appliedPrefillRef.current = true;
+    const prefs = preferencesQuery.data;
+    const inferredLevel = yearsToExperienceLevel(prefs.years_of_experience);
+    onChange({
+      ...filters,
+      work_mode: prefs.preferred_work_modes.length > 0 ? prefs.preferred_work_modes : filters.work_mode,
+      employment_type: prefs.preferred_employment_types.length > 0 ? prefs.preferred_employment_types : filters.employment_type,
+      country: prefs.preferred_countries.length > 0 ? prefs.preferred_countries : filters.country,
+      salary_min: prefs.expected_salary_min ?? filters.salary_min,
+      experience_level: inferredLevel ? [inferredLevel] : filters.experience_level,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preferencesQuery.data]);
+
   const activeCount =
     (filters.work_mode?.length ?? 0) +
     (filters.employment_type?.length ?? 0) +

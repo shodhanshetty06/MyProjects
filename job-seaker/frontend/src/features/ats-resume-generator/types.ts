@@ -53,6 +53,31 @@ export interface LanguageItem {
   proficiency: string | null;
 }
 
+export interface ContactInfo {
+  full_name: string;
+  phone: string | null;
+  email: string | null;
+  linkedin_url: string | null;
+  github_url: string | null;
+  portfolio_url: string | null;
+  location: string | null;
+}
+
+export interface SkillCategory {
+  category: string;
+  skills: string[];
+}
+
+export interface ATSResumeTemplateSummary {
+  id: string;
+  name: string;
+  description: string;
+  body_font: string;
+  heading_font: string;
+  heading_color: string;
+  accent_color: string | null;
+}
+
 export interface ATSResumeCreateRequest {
   resume_version_id: string;
   job_description: string;
@@ -60,11 +85,17 @@ export interface ATSResumeCreateRequest {
   job_title?: string | null;
   company_name?: string | null;
   target_job_id?: string | null;
+  template_id?: string;
 }
 
 export interface ATSResumeVersionCreateRequest {
   job_description?: string | null;
   resume_version_id?: string | null;
+  template_id?: string | null;
+}
+
+export interface ATSResumeVersionTemplateRequest {
+  template_id: string;
 }
 
 export interface ATSResumeVersionSummary {
@@ -72,9 +103,11 @@ export interface ATSResumeVersionSummary {
   version_number: number;
   is_current: boolean;
   status: ATSVersionStatus;
+  template_id: string;
   keyword_score: number | null;
   ats_score: number | null;
   error_message: string | null;
+  validation_warnings: string[];
   available_formats: ATSFileFormat[];
   created_at: string;
 }
@@ -82,10 +115,12 @@ export interface ATSResumeVersionSummary {
 export interface ATSResumeVersionDetail extends ATSResumeVersionSummary {
   job_description: string;
   source_resume_version_id: string;
+  contact: ContactInfo;
   original_summary: string;
   optimized_summary: string;
   original_skills: string[];
   optimized_skills: string[];
+  grouped_skills: SkillCategory[];
   original_projects: ProjectItem[];
   optimized_projects: ProjectItem[];
   experience: ExperienceItem[];

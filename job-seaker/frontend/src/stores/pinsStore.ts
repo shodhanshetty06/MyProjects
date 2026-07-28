@@ -19,9 +19,14 @@ interface PinsState {
 }
 
 /**
- * Local, per-browser "save for later" concept. The backend has no
- * save/pin endpoint for jobs, resumes, or companies (recommendations only
- * support dismiss) - this is intentionally client-only, not synced.
+ * Local, per-browser "save for later" concept for `resume`/`company` pins.
+ * The backend has no save/pin endpoint for resumes or companies
+ * (recommendations only support dismiss) - those two stay intentionally
+ * client-only, not synced. `job` pins are no longer stored here: jobs now
+ * have a real backend-persisted save/unsave via `search/api.ts::saveJob` /
+ * `unsaveJob` (see `features/search/hooks.ts::useSaveJob`/`useUnsaveJob`),
+ * so this store's `"job"` type is kept only for the `PinnedItemType` union's
+ * backward compatibility, not for new writes.
  */
 export const usePinsStore = create<PinsState>()(
   persist(

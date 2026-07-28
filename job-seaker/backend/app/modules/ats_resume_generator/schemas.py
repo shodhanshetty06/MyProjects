@@ -9,11 +9,22 @@ from pydantic import BaseModel, Field
 from app.modules.ats_resume_generator.models import ATSFileFormat, ATSVersionStatus
 from app.modules.resume_parser.schemas import (
     CertificationItem,
+    ContactInfo,
     EducationItem,
     ExperienceItem,
     LanguageItem,
     ProjectItem,
 )
+
+
+class SkillCategory(BaseModel):
+    category: str = Field(
+        description="A skill grouping label, e.g. 'Languages', 'Frameworks & Libraries', 'Tools & Platforms', 'Databases'"
+    )
+    skills: list[str] = Field(
+        default_factory=list,
+        description="Skills in this category — every entry must already appear in the `skills` list",
+    )
 
 
 class OptimizedContent(BaseModel):
@@ -41,6 +52,15 @@ class OptimizedContent(BaseModel):
             "never add a skill the candidate hasn't demonstrated."
         ),
     )
+    grouped_skills: list[SkillCategory] = Field(
+        default_factory=list,
+        description=(
+            "The `skills` list above, regrouped into clear categories (e.g. 'Languages', "
+            "'Frameworks & Libraries', 'Tools & Platforms', 'Databases'). This must be a "
+            "strict repartition of `skills` — every skill in `skills` appears in exactly one "
+            "category here, and no skill appears that isn't in `skills`."
+        ),
+    )
     projects: list[ProjectItem] = Field(
         default_factory=list,
         description=(
@@ -65,6 +85,7 @@ class ATSResumeCreateRequest(BaseModel):
     job_title: str | None = Field(default=None, max_length=255)
     company_name: str | None = Field(default=None, max_length=255)
     target_job_id: uuid.UUID | None = None
+    template_id: str = Field(default="modern_ats", max_length=50)
 
 
 class ATSResumeVersionCreateRequest(BaseModel):
@@ -75,6 +96,27 @@ class ATSResumeVersionCreateRequest(BaseModel):
 
     job_description: str | None = Field(default=None, min_length=20)
     resume_version_id: uuid.UUID | None = None
+    template_id: str | None = Field(default=None, max_length=50)
+
+
+class ATSResumeVersionTemplateRequest(BaseModel):
+    """Switch a version's visual template without re-running optimization —
+    only re-triggers file generation (see `set_template`)."""
+
+    template_id: str = Field(max_length=50)
+
+
+class ATSResumeTemplateSummary(BaseModel):
+    """Static template metadata for the picker/preview UI — mirrors
+    `templates.TemplateSpec` minus rendering-only fields."""
+
+    id: str
+    name: str
+    description: str
+    body_font: str
+    heading_font: str
+    heading_color: str
+    accent_color: str | None = None
 
 
 class ATSResumeUpdateRequest(BaseModel):
@@ -86,9 +128,11 @@ class ATSResumeVersionSummary(BaseModel):
     version_number: int
     is_current: bool
     status: ATSVersionStatus
+    template_id: str
     keyword_score: float | None = None
     ats_score: float | None = None
     error_message: str | None = None
+    validation_warnings: list[str] = Field(default_factory=list)
     available_formats: list[ATSFileFormat] = Field(default_factory=list)
     created_at: datetime
 
@@ -96,10 +140,12 @@ class ATSResumeVersionSummary(BaseModel):
 class ATSResumeVersionDetail(ATSResumeVersionSummary):
     job_description: str
     source_resume_version_id: uuid.UUID
+    contact: ContactInfo
     original_summary: str
     optimized_summary: str
     original_skills: list[str]
     optimized_skills: list[str]
+    grouped_skills: list[SkillCategory]
     original_projects: list[ProjectItem]
     optimized_projects: list[ProjectItem]
     experience: list[ExperienceItem]
@@ -159,9 +205,12 @@ class ATSResumeDownloadResponse(BaseModel):
 
 
 __all__ = [
+    "SkillCategory",
     "OptimizedContent",
     "ATSResumeCreateRequest",
     "ATSResumeVersionCreateRequest",
+    "ATSResumeVersionTemplateRequest",
+    "ATSResumeTemplateSummary",
     "ATSResumeUpdateRequest",
     "ATSResumeVersionSummary",
     "ATSResumeVersionDetail",

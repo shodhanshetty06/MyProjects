@@ -16,11 +16,40 @@ x-backend-env: &backend-env
   AWS_REGION: ${AWS_REGION:-us-east-1}
   S3_BUCKET_NAME: ${S3_BUCKET_NAME:-job-platform-storage}
   S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
-  VECTOR_DIMENSIONS: ${VECTOR_DIMENSIONS:-1024}
+  VECTOR_DIMENSIONS: ${VECTOR_DIMENSIONS:-384}
+  AI_PROVIDER: ${AI_PROVIDER:-ollama}
+  EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
+  STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+  EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
+  AI_PROVIDER_MAX_RETRIES: ${AI_PROVIDER_MAX_RETRIES:-3}
+  AI_PROVIDER_RETRY_BACKOFF_SECONDS: ${AI_PROVIDER_RETRY_BACKOFF_SECONDS:-1.0}
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+  OLLAMA_FALLBACK_MODELS: ${OLLAMA_FALLBACK_MODELS:-llama3.1:8b,gemma3:12b}
+  OLLAMA_REQUEST_TIMEOUT_SECONDS: ${OLLAMA_REQUEST_TIMEOUT_SECONDS:-120}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+  OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash}
+  GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-text-embedding-004}
+  GROQ_API_KEY: ${GROQ_API_KEY:-}
+  GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
   VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
   VOYAGE_MODEL: ${VOYAGE_MODEL:-voyage-3.5}
+  LOCAL_EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+  EMBEDDING_CACHE_TTL_SECONDS: ${EMBEDDING_CACHE_TTL_SECONDS:-604800}
+  LOCAL_STORAGE_PATH: ${LOCAL_STORAGE_PATH:-/app/storage}
+  LOCAL_STORAGE_BASE_URL: ${LOCAL_STORAGE_BASE_URL:-http://localhost:5000}
+  LOCAL_STORAGE_URL_SIGNING_SECRET: ${LOCAL_STORAGE_URL_SIGNING_SECRET:-}
+  SMTP_HOST: ${SMTP_HOST:-localhost}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+  SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-notifications@jobplatform.example.com}
   RESUME_MAX_UPLOAD_MB: ${RESUME_MAX_UPLOAD_MB:-10}
   ATS_KEYWORD_SCORE_WEIGHT: ${ATS_KEYWORD_SCORE_WEIGHT:-0.6}
   ATS_STRUCTURE_SCORE_WEIGHT: ${ATS_STRUCTURE_SCORE_WEIGHT:-0.4}
@@ -53,6 +82,16 @@ x-backend-env: &backend-env
   MATCHING_RECOMMENDATION_SKILL_LIMIT: ${MATCHING_RECOMMENDATION_SKILL_LIMIT:-10}
   MATCHING_RECOMMENDATION_REFRESH_INTERVAL_MINUTES: ${MATCHING_RECOMMENDATION_REFRESH_INTERVAL_MINUTES:-1440}
   MATCHING_STALE_MATCH_HOURS: ${MATCHING_STALE_MATCH_HOURS:-72}
+  RANKING_WEIGHT_RESUME_MATCH: ${RANKING_WEIGHT_RESUME_MATCH:-0.40}
+  RANKING_WEIGHT_HIRING_PROBABILITY: ${RANKING_WEIGHT_HIRING_PROBABILITY:-0.20}
+  RANKING_WEIGHT_SALARY: ${RANKING_WEIGHT_SALARY:-0.15}
+  RANKING_WEIGHT_RECENCY: ${RANKING_WEIGHT_RECENCY:-0.10}
+  RANKING_WEIGHT_COMPANY_QUALITY: ${RANKING_WEIGHT_COMPANY_QUALITY:-0.10}
+  RANKING_WEIGHT_COMPETITION: ${RANKING_WEIGHT_COMPETITION:-0.05}
+  RANKING_COMPETITION_MATCH_THRESHOLD: ${RANKING_COMPETITION_MATCH_THRESHOLD:-70.0}
+  DAILY_AGENT_RUN_INTERVAL_MINUTES: ${DAILY_AGENT_RUN_INTERVAL_MINUTES:-1440}
+  DAILY_AGENT_ATS_GENERATION_THRESHOLD: ${DAILY_AGENT_ATS_GENERATION_THRESHOLD:-80.0}
+  DAILY_AGENT_STAGE_CHECK_DELAY_SECONDS: ${DAILY_AGENT_STAGE_CHECK_DELAY_SECONDS:-30}
   AUTO_APPLY_MAX_ATTEMPTS: ${AUTO_APPLY_MAX_ATTEMPTS:-3}
   AUTO_APPLY_BROWSER_TIMEOUT_MS: ${AUTO_APPLY_BROWSER_TIMEOUT_MS:-30000}
   AUTO_APPLY_CONFIRMATION_WAIT_MS: ${AUTO_APPLY_CONFIRMATION_WAIT_MS:-2000}
@@ -85,6 +124,7 @@ services:
     image: ankane/pgvector:latest
     container_name: jobplatform-postgres
     restart: unless-stopped
+    command: postgres -c max_connections=200
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-jobplatform}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jobplatform}
@@ -118,6 +158,10 @@ services:
     networks:
       - jobplatform-net
 
+  # Ollama runs natively on the host (Ollama app), not in a container.
+  # OLLAMA_BASE_URL above points at host.docker.internal so containers can
+  # reach it; Docker Desktop on Windows/Mac resolves this automatically.
+
   api:
     build:
       context: ./backend
@@ -131,6 +175,7 @@ services:
       - "8000"
     volumes:
       - ./backend:/app
+      - ${LOCAL_STORAGE_HOST_PATH:-D:/resumes}:/app/storage
     depends_on:
       postgres:
         condition: service_healthy
@@ -145,9 +190,11 @@ services:
       dockerfile: Dockerfile
     container_name: jobplatform-worker-parsing
     restart: unless-stopped
-    command: celery -A app.workers.celery_app worker -Q parsing,celery --loglevel=info
+    command: celery -A app.workers.celery_app worker -Q parsing,celery --concurrency=4 --loglevel=info
     environment:
       <<: *backend-env
+      DB_POOL_SIZE: 3
+      DB_MAX_OVERFLOW: 2
     # Overrides the image's HTTP healthcheck (built for the `api` service,
     # which this image is shared with) — workers run no web server, so a
     # celery-native ping is used instead.
@@ -159,6 +206,7 @@ services:
       retries: 3
     volumes:
       - ./backend:/app
+      - ${LOCAL_STORAGE_HOST_PATH:-D:/resumes}:/app/storage
     depends_on:
       postgres:
         condition: service_healthy
@@ -173,9 +221,16 @@ services:
       dockerfile: Dockerfile
     container_name: jobplatform-worker-embedding
     restart: unless-stopped
-    command: celery -A app.workers.celery_app worker -Q embedding --loglevel=info
+    # The local sentence-transformers model (BAAI/bge-small-en-v1.5) is
+    # cached per-process (see app/providers/embedding/local_provider.py) —
+    # the default prefork pool spawns one child per host CPU, so an
+    # unbounded concurrency means that many independent copies of the model
+    # resident in memory at once, each paying its own cold-load cost.
+    command: celery -A app.workers.celery_app worker -Q embedding --concurrency=2 --loglevel=info
     environment:
       <<: *backend-env
+      DB_POOL_SIZE: 3
+      DB_MAX_OVERFLOW: 2
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]
       interval: 30s
@@ -198,9 +253,11 @@ services:
       dockerfile: Dockerfile
     container_name: jobplatform-worker-ingestion
     restart: unless-stopped
-    command: celery -A app.workers.celery_app worker -Q ingestion,skills,celery --loglevel=info
+    command: celery -A app.workers.celery_app worker -Q ingestion,skills,celery --concurrency=4 --loglevel=info
     environment:
       <<: *backend-env
+      DB_POOL_SIZE: 3
+      DB_MAX_OVERFLOW: 2
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]
       interval: 30s
@@ -223,9 +280,11 @@ services:
       dockerfile: Dockerfile
     container_name: jobplatform-worker-matching
     restart: unless-stopped
-    command: celery -A app.workers.celery_app worker -Q matching --loglevel=info
+    command: celery -A app.workers.celery_app worker -Q matching --concurrency=4 --loglevel=info
     environment:
       <<: *backend-env
+      DB_POOL_SIZE: 3
+      DB_MAX_OVERFLOW: 2
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]
       interval: 30s
@@ -248,9 +307,11 @@ services:
       dockerfile: Dockerfile
     container_name: jobplatform-worker-ats-resume
     restart: unless-stopped
-    command: celery -A app.workers.celery_app worker -Q ats_optimization,ats_files --loglevel=info
+    command: celery -A app.workers.celery_app worker -Q ats_optimization,ats_files --concurrency=2 --loglevel=info
     environment:
       <<: *backend-env
+      DB_POOL_SIZE: 3
+      DB_MAX_OVERFLOW: 2
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]
       interval: 30s
@@ -259,6 +320,7 @@ services:
       retries: 3
     volumes:
       - ./backend:/app
+      - ${LOCAL_STORAGE_HOST_PATH:-D:/resumes}:/app/storage
     depends_on:
       postgres:
         condition: service_healthy
@@ -276,6 +338,8 @@ services:
     command: celery -A app.workers.celery_app worker -Q auto_apply --concurrency=2 --loglevel=info
     environment:
       <<: *backend-env
+      DB_POOL_SIZE: 3
+      DB_MAX_OVERFLOW: 2
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]
       interval: 30s
@@ -284,6 +348,7 @@ services:
       retries: 3
     volumes:
       - ./backend:/app
+      - ${LOCAL_STORAGE_HOST_PATH:-D:/resumes}:/app/storage
     depends_on:
       postgres:
         condition: service_healthy
@@ -298,9 +363,11 @@ services:
       dockerfile: Dockerfile
     container_name: jobplatform-worker-email-tracking
     restart: unless-stopped
-    command: celery -A app.workers.celery_app worker -Q email_tracking,notifications --loglevel=info
+    command: celery -A app.workers.celery_app worker -Q email_tracking,notifications --concurrency=4 --loglevel=info
     environment:
       <<: *backend-env
+      DB_POOL_SIZE: 3
+      DB_MAX_OVERFLOW: 2
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]
       interval: 30s

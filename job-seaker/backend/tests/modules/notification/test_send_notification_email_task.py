@@ -1,8 +1,9 @@
 """Unit tests for `_send_notification_email`'s retry-classification branch —
-same shape as `auto_apply`'s exception-handling tests: a transient SES
+same shape as `auto_apply`'s exception-handling tests: a transient provider
 failure should raise `TransientNotificationError` (picked up by Celery's
-`autoretry_for`) while a permanent one should not. `SESEmailSender` is
-monkeypatched at the module level, so no real AWS credentials are required.
+`autoretry_for`) while a permanent one should not. The DI container's
+`get_container` is monkeypatched at the module level so `resolve("email_provider")`
+returns a fake sender, no real provider credentials required.
 
 Needs a reachable Postgres with migrations applied:
 
@@ -55,24 +56,30 @@ class _RaisingSender:
     def __init__(self, error: Exception) -> None:
         self._error = error
 
-    def send(self, **kwargs):
+    async def send(self, **kwargs):
         raise self._error
 
 
 class _SucceedingSender:
-    def send(self, **kwargs):
-        return "ses-message-id"
+    async def send(self, **kwargs):
+        return "provider-message-id"
+
+
+class _FakeContainer:
+    def __init__(self, email_provider) -> None:
+        self._email_provider = email_provider
+
+    def resolve(self, key: str):
+        assert key == "email_provider"
+        return self._email_provider
 
 
 async def test_transient_failure_raises_and_marks_failed_before_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     notification_id = await _seed_pending_notification(recipient_email="user@example.com")
-    monkeypatch.setattr(
-        notification_tasks,
-        "SESEmailSender",
-        lambda: _RaisingSender(TransientNotificationError("throttled")),
-    )
+    sender = _RaisingSender(TransientNotificationError("throttled"))
+    monkeypatch.setattr(notification_tasks, "get_container", lambda: _FakeContainer(sender))
 
     with pytest.raises(TransientNotificationError):
         await notification_tasks._send_notification_email(notification_id, retry_count=0)
@@ -86,11 +93,8 @@ async def test_transient_failure_on_last_attempt_does_not_raise(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     notification_id = await _seed_pending_notification(recipient_email="user@example.com")
-    monkeypatch.setattr(
-        notification_tasks,
-        "SESEmailSender",
-        lambda: _RaisingSender(TransientNotificationError("throttled")),
-    )
+    sender = _RaisingSender(TransientNotificationError("throttled"))
+    monkeypatch.setattr(notification_tasks, "get_container", lambda: _FakeContainer(sender))
 
     # retry_count at NOTIFICATION_MAX_RETRIES - 1 is the last attempt — should
     # not re-raise (Celery would otherwise retry past its own max_retries).
@@ -106,8 +110,14 @@ async def test_missing_recipient_email_fails_without_calling_sender(
 ) -> None:
     notification_id = await _seed_pending_notification(recipient_email=None)
     calls: list[str] = []
+
+    class _TrackingContainer(_FakeContainer):
+        def resolve(self, key: str):
+            calls.append(key)
+            return super().resolve(key)
+
     monkeypatch.setattr(
-        notification_tasks, "SESEmailSender", lambda: calls.append("called") or _SucceedingSender()
+        notification_tasks, "get_container", lambda: _TrackingContainer(_SucceedingSender())
     )
 
     await notification_tasks._send_notification_email(notification_id, retry_count=0)
@@ -119,7 +129,9 @@ async def test_missing_recipient_email_fails_without_calling_sender(
 
 async def test_successful_send_marks_sent(monkeypatch: pytest.MonkeyPatch) -> None:
     notification_id = await _seed_pending_notification(recipient_email="user@example.com")
-    monkeypatch.setattr(notification_tasks, "SESEmailSender", lambda: _SucceedingSender())
+    monkeypatch.setattr(
+        notification_tasks, "get_container", lambda: _FakeContainer(_SucceedingSender())
+    )
 
     await notification_tasks._send_notification_email(notification_id, retry_count=0)
 

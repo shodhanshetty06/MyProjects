@@ -54,7 +54,40 @@ class ATSPlatform(str, enum.Enum):
     GREENHOUSE = "greenhouse"
     LEVER = "lever"
     WORKDAY = "workday"
+    ASHBY = "ashby"
+    WORKABLE = "workable"
+    SMARTRECRUITERS = "smartrecruiters"
+    JOBVITE = "jobvite"
     CUSTOM_HTML = "custom_html"
+    UNKNOWN = "unknown"
+
+
+class SeniorityLevel(str, enum.Enum):
+    """AI-inferred seniority band — display only, never fabricated without
+    supporting text (see `SKILL_EXTRACTION_SYSTEM_PROMPT` -> job understanding
+    prompt in `tasks.py`, which requires the model ground every field in the
+    posting text or fall back to `unknown`)."""
+
+    INTERN = "intern"
+    JUNIOR = "junior"
+    MID = "mid"
+    SENIOR = "senior"
+    LEAD = "lead"
+    STAFF = "staff"
+    PRINCIPAL = "principal"
+    EXECUTIVE = "executive"
+    UNKNOWN = "unknown"
+
+
+class RemotePolicy(str, enum.Enum):
+    """Company-level remote posture — distinct from `Job.work_mode`, which is
+    per-posting. Set manually via `CompanyIntelligenceUpsertRequest` or
+    inferred later from the mix of a company's job postings."""
+
+    REMOTE_FIRST = "remote_first"
+    HYBRID = "hybrid"
+    ONSITE = "onsite"
+    FLEXIBLE = "flexible"
     UNKNOWN = "unknown"
 
 
@@ -142,8 +175,17 @@ class CompanyIntelligence(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     last_crawled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_crawl_status: Mapped[IngestionRunStatus | None] = mapped_column(String(20), nullable=True)
     hiring_frequency_per_month: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    # Glassdoor-style aggregate rating (0.00-5.00). Named generically since the
+    # source may not literally be Glassdoor.
     company_rating: Mapped[float | None] = mapped_column(Numeric(3, 2), nullable=True)
     hiring_trends: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # --- Company Intelligence profile fields (Feature 4) ---
+    company_size: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    funding_stage: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    remote_policy: Mapped[RemotePolicy] = mapped_column(
+        String(20), nullable=False, default=RemotePolicy.UNKNOWN
+    )
+    tech_stack: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
 
     company: Mapped[Company] = relationship(back_populates="intelligence")
 
@@ -233,6 +275,27 @@ class Job(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     raw_payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # --- AI Job Understanding (Feature 3) — populated by the "enrich" stage
+    # in tasks.py, grounded in the posting text (see the system prompt).
+    # `skills` (the Skill relationship below) remains the union of
+    # required+preferred for search/matching continuity; these columns keep
+    # the finer-grained breakdown for display and future scoring. ---
+    required_skills: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    preferred_skills: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    responsibilities: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    benefits: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    tech_stack: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    seniority: Mapped[SeniorityLevel] = mapped_column(
+        String(20), nullable=False, default=SeniorityLevel.UNKNOWN
+    )
+    industry: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    department: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # --- Job Quality Score (Feature 5) — deterministic, rule-based (see
+    # `quality.py`); recomputed whenever the posting's content changes so it
+    # never drifts from the current data (no learned/trained weights, so
+    # there's nothing here that can overfit to historical data). ---
+    quality_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    quality_reasons: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
     # Postgres-generated `GENERATED ALWAYS AS (...) STORED` column (title
     # weighted over description) — the DDL itself is created by the search
     # module's `0003_search_indexes` migration; `Computed(...)` here just
@@ -304,6 +367,8 @@ __all__ = [
     "SalaryPeriod",
     "JobStatus",
     "IngestionRunStatus",
+    "SeniorityLevel",
+    "RemotePolicy",
     "Company",
     "CompanyIntelligence",
     "Location",

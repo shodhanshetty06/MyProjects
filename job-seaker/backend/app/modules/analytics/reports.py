@@ -1,8 +1,8 @@
 """CSV / PDF report generation for the analytics dashboard.
 
 Pure functions over plain dataclasses/schemas — mirrors
-`app.modules.ats_resume_generator.documents`, so both formats are trivial to
-unit test without a DB or S3.
+`app.modules.ats_resume_generator.docx_renderer`, so both formats are
+trivial to unit test without a DB or S3.
 """
 from __future__ import annotations
 

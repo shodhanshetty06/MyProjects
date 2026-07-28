@@ -6,7 +6,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import CurrentUserIdDep, DBSessionDep, S3StorageDep
+from app.api.deps import CurrentUserIdDep, DBSessionDep, StorageProviderDep
 from app.modules.ats_resume_generator.models import ATSFileFormat, ATSResume, ATSResumeVersion
 from app.modules.ats_resume_generator.repository import (
     ATSResumeRepository,
@@ -16,25 +16,28 @@ from app.modules.ats_resume_generator.schemas import (
     ATSResumeCreateRequest,
     ATSResumeDownloadResponse,
     ATSResumeRead,
+    ATSResumeTemplateSummary,
     ATSResumeUpdateRequest,
     ATSResumeVersionCreateRequest,
     ATSResumeVersionDetail,
     ATSResumeVersionDiff,
     ATSResumeVersionSummary,
+    ATSResumeVersionTemplateRequest,
 )
 from app.modules.ats_resume_generator.service import ATSResumeGeneratorService
+from app.modules.ats_resume_generator.templates import list_templates
 from app.schemas.common import BaseResponse, PaginatedResponse, PaginationMeta, PaginationParams
 
 router = APIRouter(prefix="/ats-resumes", tags=["ATS Resume Generator"])
 
 
 def get_ats_resume_generator_service(
-    session: DBSessionDep, s3_storage: S3StorageDep
+    session: DBSessionDep, storage_provider: StorageProviderDep
 ) -> ATSResumeGeneratorService:
     return ATSResumeGeneratorService(
         ats_resume_repository=ATSResumeRepository(session),
         version_repository=ATSResumeVersionRepository(session),
-        s3_storage=s3_storage,
+        storage_provider=storage_provider,
     )
 
 
@@ -51,9 +54,11 @@ def _version_summary(version: ATSResumeVersion) -> ATSResumeVersionSummary:
         version_number=version.version_number,
         is_current=version.is_current,
         status=version.status,
+        template_id=version.template_id,
         keyword_score=_optional_float(version.keyword_score),
         ats_score=_optional_float(version.ats_score),
         error_message=version.error_message,
+        validation_warnings=version.validation_warnings,
         available_formats=[f.format for f in version.files],
         created_at=version.created_at,
     )
@@ -64,10 +69,12 @@ def _version_detail(version: ATSResumeVersion) -> ATSResumeVersionDetail:
         **_version_summary(version).model_dump(),
         job_description=version.job_description,
         source_resume_version_id=version.source_resume_version_id,
+        contact=version.contact,
         original_summary=version.original_summary,
         optimized_summary=version.optimized_summary,
         original_skills=version.original_skills,
         optimized_skills=version.optimized_skills,
+        grouped_skills=version.grouped_skills,
         original_projects=version.original_projects,
         optimized_projects=version.optimized_projects,
         experience=version.experience,
@@ -132,6 +139,26 @@ async def list_ats_resumes(
             total_items=total,
             total_pages=math.ceil(total / pagination.page_size) if total else 0,
         ),
+    )
+
+
+@router.get("/templates", response_model=BaseResponse[list[ATSResumeTemplateSummary]])
+async def get_ats_resume_templates() -> BaseResponse[list[ATSResumeTemplateSummary]]:
+    """Static template metadata for the picker/preview UI — registered ahead
+    of `/{ats_resume_id}` so the literal path wins the route match."""
+    return BaseResponse(
+        data=[
+            ATSResumeTemplateSummary(
+                id=t.id,
+                name=t.name,
+                description=t.description,
+                body_font=t.body_font,
+                heading_font=t.heading_font,
+                heading_color=t.heading_color,
+                accent_color=t.accent_color,
+            )
+            for t in list_templates()
+        ]
     )
 
 
@@ -226,6 +253,28 @@ async def activate_ats_resume_version(
         user_id=user_id, ats_resume_id=ats_resume_id, version_id=version_id
     )
     return BaseResponse(message="ATS resume version activated.", data=_version_summary(version))
+
+
+@router.put(
+    "/{ats_resume_id}/versions/{version_id}/template",
+    response_model=BaseResponse[ATSResumeVersionSummary],
+)
+async def set_ats_resume_version_template(
+    ats_resume_id: uuid.UUID,
+    version_id: uuid.UUID,
+    payload: ATSResumeVersionTemplateRequest,
+    user_id: CurrentUserIdDep,
+    service: ATSResumeGeneratorService = ServiceDep,
+) -> BaseResponse[ATSResumeVersionSummary]:
+    version = await service.set_template(
+        user_id=user_id,
+        ats_resume_id=ats_resume_id,
+        version_id=version_id,
+        template_id=payload.template_id,
+    )
+    return BaseResponse(
+        message="Template updated — re-rendering files.", data=_version_summary(version)
+    )
 
 
 @router.delete("/{ats_resume_id}/versions/{version_id}", response_model=BaseResponse[None])

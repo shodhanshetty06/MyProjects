@@ -72,3 +72,21 @@ class ServiceUnavailableError(AppException):
     status_code = 503
     error_code = "service_unavailable"
     message = "A dependent service is currently unavailable."
+
+
+class TransientProviderError(ServiceUnavailableError):
+    """Retryable AI/embedding provider failure: connection refused, timeout,
+    or a 5xx response. Raised by `providers/ai/*` and `providers/embedding/*`
+    so `AIService`/`EmbeddingService` know it's worth retrying."""
+
+    error_code = "provider_transient_error"
+    message = "The AI provider is temporarily unavailable."
+
+
+class ProviderUnavailableError(ServiceUnavailableError):
+    """Non-retryable AI/embedding provider failure: bad configuration, model
+    refusal, invalid/unparseable response, or all fallback models exhausted.
+    Raised by `providers/ai/*` and `providers/embedding/*`."""
+
+    error_code = "provider_unavailable"
+    message = "The AI provider is unavailable."

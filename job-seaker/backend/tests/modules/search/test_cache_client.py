@@ -1,7 +1,7 @@
 """Unit tests for `CacheClient` — JSON round-trip, TTL pass-through, and
 deterministic key building. Uses a hand-rolled fake Redis (no real network),
 matching the fake-provider-client convention used elsewhere in the test
-suite (e.g. `_FakeS3Storage`, `_FakeVoyageClient`).
+suite (e.g. `_FakeStorageProvider`, `_FakeEmbeddingProvider`).
 """
 
 from __future__ import annotations

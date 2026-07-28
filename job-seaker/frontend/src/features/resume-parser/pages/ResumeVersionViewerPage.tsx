@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle, Download, GraduationCap, Loader2, Sparkles } from "lucide-react";
 import { useParams } from "react-router-dom";
 
@@ -11,6 +11,7 @@ import { Card, CardContent } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { useAuth } from "@/features/auth";
 import { getResumeVersion, getResumeVersionDownloadUrl } from "@/features/resume-parser/api";
+import { useParsingStageMessage } from "@/features/resume-parser/hooks";
 import type { ResumeVersionStatus } from "@/features/resume-parser/types";
 import { VersionStatusBadge } from "@/features/resume-parser/components/VersionStatusBadge";
 
@@ -29,6 +30,7 @@ export function ResumeVersionViewerPage() {
   });
 
   const version = versionQuery.data;
+  const stageMessage = useParsingStageMessage(version?.status);
 
   async function handleDownload() {
     if (!resumeId || !versionId) return;
@@ -60,9 +62,22 @@ export function ResumeVersionViewerPage() {
         </motion.div>
         <h1 className="text-lg font-semibold text-ink">Parsing your resume...</h1>
         <p className="mt-1 text-sm text-ink-secondary">
-          {version.original_filename} is being read into structured skills, experience, and education. This
-          usually takes a few seconds.
+          {version.original_filename} is being read into structured skills, experience, and education.
         </p>
+        <div className="mt-2 h-5 overflow-hidden">
+          <AnimatePresence mode="wait">
+            <motion.p
+              key={stageMessage}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.25 }}
+              className="text-sm font-medium text-brand"
+            >
+              {stageMessage}
+            </motion.p>
+          </AnimatePresence>
+        </div>
       </div>
     );
   }

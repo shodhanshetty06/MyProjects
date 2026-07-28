@@ -14,7 +14,7 @@ import uuid
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import CacheDep, CurrentUserIdDep, DBSessionDep
+from app.api.deps import AIServiceDep, CacheDep, CurrentUserIdDep, DBSessionDep
 from app.modules.email_tracking.repository import GmailAccountRepository, TrackedEmailRepository
 from app.modules.email_tracking.schemas import (
     GmailAccountRead,
@@ -41,15 +41,18 @@ from app.schemas.common import BaseResponse, PaginatedResponse, PaginationMeta, 
 router = APIRouter(prefix="/email-tracking", tags=["Email Tracking"])
 
 
-def get_email_tracking_service(session: DBSessionDep, cache: CacheDep) -> EmailTrackingService:
+def get_email_tracking_service(
+    session: DBSessionDep, cache: CacheDep, ai_service: AIServiceDep
+) -> EmailTrackingService:
+    notification_service = NotificationService(
+        repository=NotificationRepository(session),
+        preference_repository=NotificationPreferenceRepository(session),
+    )
     tracking_service = TrackingService(
         application_repository=ApplicationRepository(session),
         status_history_repository=ApplicationStatusHistoryRepository(session),
         note_repository=ApplicationNoteRepository(session),
-    )
-    notification_service = NotificationService(
-        repository=NotificationRepository(session),
-        preference_repository=NotificationPreferenceRepository(session),
+        notification_service=notification_service,
     )
     return EmailTrackingService(
         gmail_account_repository=GmailAccountRepository(session),
@@ -58,6 +61,7 @@ def get_email_tracking_service(session: DBSessionDep, cache: CacheDep) -> EmailT
         tracking_service=tracking_service,
         notification_service=notification_service,
         cache=cache,
+        ai_service=ai_service,
     )
 
 

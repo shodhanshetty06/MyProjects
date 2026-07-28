@@ -13,6 +13,17 @@ export type EmploymentType =
   | "temporary"
   | "freelance"
   | "unknown";
+export type SeniorityLevel =
+  | "intern"
+  | "junior"
+  | "mid"
+  | "senior"
+  | "lead"
+  | "staff"
+  | "principal"
+  | "executive"
+  | "unknown";
+export type RemotePolicy = "remote_first" | "hybrid" | "onsite" | "flexible" | "unknown";
 
 export interface CompanyIntelligenceRead {
   ats_platform: string | null;
@@ -24,6 +35,10 @@ export interface CompanyIntelligenceRead {
   hiring_frequency_per_month: number | null;
   company_rating: number | null;
   hiring_trends: Record<string, unknown> | null;
+  company_size: string | null;
+  funding_stage: string | null;
+  remote_policy: RemotePolicy;
+  tech_stack: string[];
 }
 
 export interface CompanyRead {
@@ -38,6 +53,10 @@ export interface CompanyRead {
   created_at: string;
   updated_at: string;
   intelligence: CompanyIntelligenceRead | null;
+  /** Computed from active yearly-salary postings — see backend
+   * `JobRepository.get_average_yearly_salary`; never stale. */
+  avg_salary_yearly: number | null;
+  avg_salary_currency: string | null;
 }
 
 export interface LocationRead {
@@ -52,6 +71,12 @@ export interface LocationRead {
 export interface SkillRead {
   id: string;
   name: string;
+}
+
+export interface JobQualityReasonRead {
+  label: string;
+  positive: boolean;
+  weight: number;
 }
 
 export interface JobRead {
@@ -74,6 +99,18 @@ export interface JobRead {
   has_embedding: boolean;
   created_at: string;
   updated_at: string;
+  required_skills: string[];
+  preferred_skills: string[];
+  responsibilities: string[];
+  benefits: string[];
+  tech_stack: string[];
+  seniority: SeniorityLevel;
+  industry: string | null;
+  department: string | null;
+  /** 0-100, rule-based (see backend `job_ingestion/quality.py`). Null until
+   * the enrichment stage of the ingestion pipeline has run for this job. */
+  quality_score: number | null;
+  quality_reasons: JobQualityReasonRead[];
 }
 
 export interface JobListFiltersParams {

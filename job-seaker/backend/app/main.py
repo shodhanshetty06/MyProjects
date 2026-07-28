@@ -10,11 +10,13 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from app.api.v1.router import api_router as api_v1_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import engine
+from app.dependency_injection.providers import build_embedding_service
 from app.events.handlers import register_all_handlers
 from app.integrations.redis_client import close_redis_client, get_redis_client
 from app.middleware.exception_middleware import register_exception_handlers
@@ -33,6 +35,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Warm the Redis connection and verify connectivity fails fast if misconfigured.
     redis_client = get_redis_client()
     await redis_client.ping()
+
+    # Fail fast on a misconfigured .env rather than erroring deep inside a
+    # Celery task the first time an embedding gets inserted — pgvector
+    # enforces the column's fixed width, so a provider/VECTOR_DIMENSIONS
+    # mismatch must be caught here, not at insert time.
+    embedding_service = build_embedding_service(settings)
+    if embedding_service.dimensions != settings.VECTOR_DIMENSIONS:
+        logger.error(
+            "EMBEDDING_PROVIDER dimension mismatch",
+            extra={
+                "extra_fields": {
+                    "embedding_provider": settings.EMBEDDING_PROVIDER,
+                    "provider_dimensions": embedding_service.dimensions,
+                    "configured_vector_dimensions": settings.VECTOR_DIMENSIONS,
+                }
+            },
+        )
+        raise RuntimeError(
+            f"VECTOR_DIMENSIONS={settings.VECTOR_DIMENSIONS} does not match "
+            f"EMBEDDING_PROVIDER={settings.EMBEDDING_PROVIDER}'s output width "
+            f"({embedding_service.dimensions}). Update VECTOR_DIMENSIONS and "
+            "re-run the embedding-dimensions migration."
+        )
 
     register_all_handlers()
 
@@ -74,6 +99,11 @@ def create_app() -> FastAPI:
     # run before LoggingMiddleware so the request_id is set before logging.
     app.add_middleware(LoggingMiddleware)
     app.add_middleware(RequestContextMiddleware)
+    # Compresses large JSON payloads (workspace aggregation, search results,
+    # job listings) — nginx also gzips in front of this, but the middleware
+    # keeps responses compressed for any client that talks to the API
+    # directly (tests, another proxy, local tooling on :8000).
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     register_exception_handlers(app)
 

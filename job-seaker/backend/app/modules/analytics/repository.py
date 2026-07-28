@@ -23,6 +23,7 @@ from app.modules.resume_parser.models import (
     ResumeVersion,
     ResumeVersionStatus,
 )
+from app.modules.search.models import SavedJob
 from app.modules.tracking.models import Application, ApplicationStatus, ApplicationStatusHistory
 from app.repositories.base import BaseRepository
 
@@ -299,15 +300,31 @@ class AnalyticsRepository(BaseRepository):
         date_to: datetime,
         limit: int,
     ) -> list[tuple[str, int, int, int]]:
+        # Scoped to this user's own applications via the same join/filter the
+        # outer query uses, rather than a bare `SELECT ... FROM
+        # application_status_history` — unscoped, these two subqueries would
+        # be evaluated over every application's status history on the whole
+        # platform on every dashboard load, when only this user's rows can
+        # ever match the outer join anyway.
         interviewed = (
             select(ApplicationStatusHistory.application_id)
-            .where(ApplicationStatusHistory.to_status.in_(_INTERVIEW_STATUSES))
+            .join(Application, Application.id == ApplicationStatusHistory.application_id)
+            .where(
+                ApplicationStatusHistory.to_status.in_(_INTERVIEW_STATUSES),
+                Application.user_id == user_id,
+                Application.deleted_at.is_(None),
+            )
             .distinct()
             .subquery()
         )
         offered = (
             select(ApplicationStatusHistory.application_id)
-            .where(ApplicationStatusHistory.to_status.in_(_OFFER_STATUSES))
+            .join(Application, Application.id == ApplicationStatusHistory.application_id)
+            .where(
+                ApplicationStatusHistory.to_status.in_(_OFFER_STATUSES),
+                Application.user_id == user_id,
+                Application.deleted_at.is_(None),
+            )
             .distinct()
             .subquery()
         )
@@ -472,6 +489,13 @@ class AnalyticsRepository(BaseRepository):
         )
         rows = (await self.session.execute(stmt)).all()
         return [(row[0], row[1]) for row in rows]
+
+    # --- Job Search integration (Section 8) ------------------------------------------
+
+    async def count_saved_jobs(self, *, user_id: uuid.UUID) -> int:
+        stmt = select(func.count(SavedJob.id)).where(SavedJob.user_id == user_id)
+        result = await self.session.execute(stmt)
+        return result.scalar_one()
 
     # --- export ------------------------------------------------------------------------
 

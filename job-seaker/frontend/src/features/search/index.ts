@@ -1,6 +1,6 @@
 export * from "./api";
+export * from "./hooks";
 export { JobDetailPage } from "./pages/JobDetailPage";
-export { RecommendedJobsPage } from "./pages/RecommendedJobsPage";
+export { JobSearchHomePage } from "./pages/JobSearchHomePage";
 export { SavedJobsPage } from "./pages/SavedJobsPage";
-export { SearchPage } from "./pages/SearchPage";
 export * from "./types";

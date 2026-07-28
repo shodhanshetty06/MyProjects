@@ -1,6 +1,7 @@
 """Authentication module — application/use-case layer."""
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -51,15 +52,22 @@ class AuthService:
         existing = await self.repository.get_by_email(normalized_email)
         if existing is not None:
             raise ConflictError("An account with this email already exists.")
+        # bcrypt is CPU-bound and ~100-300ms at this cost factor; running it
+        # inline would block the single event loop for every concurrent
+        # request (health checks, other users' logins, WebSocket traffic)
+        # for the duration of the hash.
+        hashed = await asyncio.to_thread(hash_password, password)
         user = await self.repository.create(
-            email=normalized_email, hashed_password=hash_password(password)
+            email=normalized_email, hashed_password=hashed
         )
         logger.info("User registered", extra={"extra_fields": {"user_id": str(user.id)}})
         return user
 
     async def authenticate(self, *, email: str, password: str) -> User:
         user = await self.repository.get_by_email(email.lower())
-        if user is None or not verify_password(password, user.hashed_password):
+        if user is None or not await asyncio.to_thread(
+            verify_password, password, user.hashed_password
+        ):
             raise UnauthorizedError("Invalid email or password.")
         if not user.is_active:
             raise ForbiddenError("This account has been deactivated.")

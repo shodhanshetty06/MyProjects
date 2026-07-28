@@ -32,6 +32,7 @@ from app.modules.matching.schemas import (
     RefreshRecommendationsResponse,
     ResumeJobMatchRead,
     ScoreBreakdown,
+    SkillCheckItem,
 )
 from app.modules.resume_parser.models import ResumeVersion
 
@@ -150,6 +151,14 @@ class MatchingService:
         }
 
     def _to_read(self, match: ResumeJobMatch, job: Job) -> ResumeJobMatchRead:
+        skill_checklist = [
+            SkillCheckItem(skill=skill, matched=matched)
+            for skill, matched in scoring.build_skill_checklist(
+                job_skills=[s.name for s in job.skills],
+                matched_skills=match.matched_skills,
+                missing_skills=match.missing_skills,
+            )
+        ]
         return ResumeJobMatchRead(
             id=match.id,
             resume_version_id=match.resume_version_id,
@@ -158,9 +167,11 @@ class MatchingService:
             match_score=float(match.match_score) if match.match_score is not None else None,
             matched_skills=match.matched_skills,
             missing_skills=match.missing_skills,
+            skill_checklist=skill_checklist,
             strengths=match.strengths,
             weaknesses=match.weaknesses,
             score_breakdown=ScoreBreakdown.model_validate(match.score_breakdown),
+            ai_narrative=match.ai_narrative,
             job=JobSummary(
                 id=job.id,
                 title=job.title,

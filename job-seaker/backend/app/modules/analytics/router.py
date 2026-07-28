@@ -17,13 +17,16 @@ from app.api.deps import CurrentUserIdDep, DBSessionDep
 from app.modules.analytics.repository import AnalyticsRepository
 from app.modules.analytics.schemas import AnalyticsDashboardResponse, AnalyticsFilters
 from app.modules.analytics.service import AnalyticsService
+from app.modules.matching.repository import MatchingRepository
 from app.schemas.common import BaseResponse
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
 
 def get_analytics_service(session: DBSessionDep) -> AnalyticsService:
-    return AnalyticsService(repository=AnalyticsRepository(session))
+    return AnalyticsService(
+        repository=AnalyticsRepository(session), matching_repository=MatchingRepository(session)
+    )
 
 
 ServiceDep = Depends(get_analytics_service)

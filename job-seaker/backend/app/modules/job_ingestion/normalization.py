@@ -70,6 +70,12 @@ class LocationParts:
     is_remote: bool
 
 
+@dataclass(frozen=True)
+class ValidationResult:
+    is_valid: bool
+    errors: list[str]
+
+
 def _detect_currency(raw: str) -> str | None:
     for symbol, code in _CURRENCY_SYMBOLS.items():
         if symbol in raw:
@@ -199,6 +205,66 @@ def parse_location(raw: str | None) -> LocationParts:
     )
 
 
+_TITLE_ID_SUFFIX_RE = re.compile(
+    r"[\s\-–—|(]*(?:req|job|ref|id|posting)?\s*(?:id|#)?\s*[:#]?\s*[A-Z]{0,4}-?\d{3,}\)?\s*$",
+    re.IGNORECASE,
+)
+_TITLE_WORK_MODE_PARENS_RE = re.compile(
+    r"[\s\-–—|(]*\((?:remote|hybrid|on-?site|in[\s-]office)\)\s*$", re.IGNORECASE
+)
+_TITLE_TRAILING_SEP_RE = re.compile(r"[\s\-–—|]+$")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+MIN_TITLE_LENGTH = 3
+MIN_DESCRIPTION_WORDS = 30
+
+
+def clean_title(raw_title: str) -> str:
+    """Strip ATS noise from a job title so what's stored is presentable.
+
+    Removes trailing requisition/job IDs (`"... - ID83932"`, `"(Req #1234)"`)
+    and trailing work-mode parentheticals (`"(Remote)"`, which is redundant
+    with the structured `work_mode` field), then collapses whitespace.
+    Applied repeatedly since some ATSs stack both suffixes.
+    """
+    title = raw_title.strip()
+    previous = None
+    while title != previous:
+        previous = title
+        title = _TITLE_ID_SUFFIX_RE.sub("", title)
+        title = _TITLE_WORK_MODE_PARENS_RE.sub("", title)
+        title = _TITLE_TRAILING_SEP_RE.sub("", title)
+    return _WHITESPACE_RE.sub(" ", title).strip()
+
+
+def validate_posting(
+    *,
+    title: str,
+    description: str,
+    url: str,
+    min_description_words: int = MIN_DESCRIPTION_WORDS,
+) -> ValidationResult:
+    """Reject postings too malformed to be worth storing.
+
+    Sits between the adapter and the database: a bad title, an empty/near-
+    empty description, or a missing URL means the adapter (or the upstream
+    ATS) served something unusable, and it's better to skip that one posting
+    with a clear reason than to silently store garbage or let normalization
+    fail downstream with a less legible error.
+    """
+    errors: list[str] = []
+    if not title or len(title.strip()) < MIN_TITLE_LENGTH:
+        errors.append("title is missing or too short")
+    if not url or not url.strip():
+        errors.append("url is missing")
+    word_count = len(description.split()) if description else 0
+    if word_count < min_description_words:
+        errors.append(
+            f"description has only {word_count} words (minimum {min_description_words})"
+        )
+    return ValidationResult(is_valid=not errors, errors=errors)
+
+
 def compute_content_hash(
     *, title: str, description: str, location_raw: str | None, salary_raw: str | None
 ) -> str:
@@ -221,9 +287,12 @@ def compute_content_hash(
 __all__ = [
     "SalaryInfo",
     "LocationParts",
+    "ValidationResult",
     "parse_salary",
     "parse_employment_type",
     "parse_work_mode",
     "parse_location",
+    "clean_title",
+    "validate_posting",
     "compute_content_hash",
 ]

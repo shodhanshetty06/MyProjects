@@ -10,6 +10,7 @@ import uuid
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 
+from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.modules.analytics.reports import (
     AnalyticsReportContent,
@@ -33,6 +34,7 @@ from app.modules.analytics.schemas import (
     HiringCompanyCount,
     HiringTrendPoint,
     HiringTrends,
+    MatchedCompanyCount,
     ResponseTimePoint,
     ResponseTimeSeries,
     ResumePerformance,
@@ -43,6 +45,7 @@ from app.modules.analytics.schemas import (
     TrendPoint,
     TrendSeries,
 )
+from app.modules.matching.repository import MatchingRepository
 from app.modules.tracking.models import ApplicationStatus
 
 logger = get_logger(__name__)
@@ -139,10 +142,21 @@ def _count_skills(skill_lists: list[list[str]]) -> tuple[Counter, dict[str, str]
 
 
 class AnalyticsService:
-    """Builds the analytics dashboard and its CSV/PDF exports."""
+    """Builds the analytics dashboard and its CSV/PDF exports.
 
-    def __init__(self, repository: AnalyticsRepository) -> None:
+    `matching_repository` composes in the Job Search integration fields
+    (`average_match_score`, `top_matched_companies`) the same way
+    `WorkspaceService` composes across modules — read via
+    `MatchingRepository.list_matches_for_user`/`get_jobs_by_ids`, not a new
+    duplicate scoring/aggregation query.
+    """
+
+    def __init__(
+        self, repository: AnalyticsRepository, matching_repository: MatchingRepository
+    ) -> None:
         self.repository = repository
+        self.matching_repository = matching_repository
+        self._settings = get_settings()
 
     def _resolve_window(self, filters: AnalyticsFilters) -> tuple[datetime, datetime]:
         now = datetime.now(UTC)
@@ -173,6 +187,8 @@ class AnalyticsService:
         skill_demand = await self._skill_demand(user_id, top_n)
         response_time = await self._response_time(user_id, date_from, date_to, interval)
         heatmap = await self._heatmap(user_id, date_from, date_to)
+        saved_jobs_count = await self.repository.count_saved_jobs(user_id=user_id)
+        average_match_score, top_matched_companies = await self._match_summary(user_id, top_n)
 
         return AnalyticsDashboardResponse(
             generated_at=datetime.now(UTC),
@@ -193,6 +209,9 @@ class AnalyticsService:
             skill_demand=skill_demand,
             response_time=response_time,
             heatmap=heatmap,
+            saved_jobs_count=saved_jobs_count,
+            average_match_score=average_match_score,
+            top_matched_companies=top_matched_companies,
         )
 
     # --- section builders --------------------------------------------------------------
@@ -351,6 +370,44 @@ class AnalyticsService:
             score_trend=score_trend,
             score_distribution=distribution,
         )
+
+    async def _match_summary(
+        self, user_id: uuid.UUID, limit: int
+    ) -> tuple[float | None, list[MatchedCompanyCount]]:
+        """`average_match_score` + `top_matched_companies`, both derived
+        from `MatchingRepository.list_matches_for_user` (already-computed
+        `ResumeJobMatch` rows) — no new scoring logic, just a report-shaped
+        aggregation over data `matching` already produced.
+        """
+        matches = await self.matching_repository.list_matches_for_user(
+            user_id=user_id, limit=self._settings.MATCHING_CANDIDATE_LIMIT
+        )
+        scored = [m for m in matches if m.match_score is not None]
+        if not scored:
+            return None, []
+
+        average_match_score = round(sum(float(m.match_score) for m in scored) / len(scored), 2)
+
+        jobs_by_id = await self.matching_repository.get_jobs_by_ids([m.job_id for m in scored])
+        scores_by_company: dict[str, list[float]] = {}
+        for match in scored:
+            job = jobs_by_id.get(match.job_id)
+            if job is None:
+                continue
+            scores_by_company.setdefault(job.company.name, []).append(float(match.match_score))
+
+        ranked = sorted(
+            scores_by_company.items(), key=lambda kv: sum(kv[1]) / len(kv[1]), reverse=True
+        )
+        top_matched_companies = [
+            MatchedCompanyCount(
+                company_name=name,
+                matches=len(scores),
+                average_match_score=round(sum(scores) / len(scores), 2),
+            )
+            for name, scores in ranked[:limit]
+        ]
+        return average_match_score, top_matched_companies
 
     async def _top_skills(self, user_id: uuid.UUID, limit: int) -> list[SkillCount]:
         skill_lists = await self.repository.current_resume_skill_lists(user_id=user_id)

@@ -13,7 +13,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { useLocation, useParams } from "react-router-dom";
 
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
@@ -49,6 +49,17 @@ import {
 import { useAuth } from "@/features/auth";
 import { useParsedResumeOptions } from "@/features/resume-parser/hooks";
 
+/**
+ * State shape a caller can pass via `navigate(paths.coachTool(id), { state })`
+ * to arrive with fields pre-filled — e.g. the Jobs feed deep-linking
+ * "Prepare interview" for a specific listing with `targetRole` set to its
+ * job title, so the user doesn't have to retype it.
+ */
+export interface CoachToolPrefill {
+  targetRole?: string;
+  country?: string;
+}
+
 interface ToolMeta {
   label: string;
   icon: LucideIcon;
@@ -72,14 +83,16 @@ const TOOL_META: Record<string, ToolMeta> = {
 
 export function CoachToolPage() {
   const { toolId } = useParams<{ toolId: string }>();
+  const location = useLocation();
+  const prefill = (location.state as CoachToolPrefill | null) ?? null;
   const { user } = useAuth();
   const userId = user!.id;
   const meta = toolId ? TOOL_META[toolId] : undefined;
 
   const [resumeVersionId, setResumeVersionId] = useState("");
-  const [targetRole, setTargetRole] = useState("");
+  const [targetRole, setTargetRole] = useState(prefill?.targetRole ?? "");
   const [timeframeMonths, setTimeframeMonths] = useState(6);
-  const [country, setCountry] = useState("");
+  const [country, setCountry] = useState(prefill?.country ?? "");
   const [yearsExperience, setYearsExperience] = useState("");
   const [title, setTitle] = useState("");
   const [skill, setSkill] = useState("");

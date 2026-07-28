@@ -65,6 +65,19 @@ class ATSResumeRepository(BaseRepository[ATSResume]):
         result = await self.session.execute(stmt)
         return result.scalars().unique().one_or_none()
 
+    async def exists_for_target_job(self, *, user_id: uuid.UUID, job_id: uuid.UUID) -> bool:
+        """Used by the Daily AI Agent (`daily_agent` module) to avoid
+        generating a duplicate ATS resume for a job it already prepared one
+        for on a previous run.
+        """
+        stmt = select(func.count()).select_from(ATSResume).where(
+            ATSResume.user_id == user_id,
+            ATSResume.target_job_id == job_id,
+            ATSResume.deleted_at.is_(None),
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one() > 0
+
 
 class ATSResumeVersionRepository(BaseRepository[ATSResumeVersion]):
     """Data access for `ATSResumeVersion`, including current-version bookkeeping."""

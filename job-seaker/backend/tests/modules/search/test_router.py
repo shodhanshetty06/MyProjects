@@ -8,10 +8,11 @@ migrated) and Redis:
     docker compose exec api alembic upgrade head
     docker compose exec api pytest tests/modules/search/test_router.py
 
-Voyage embeddings are faked at the `AIService._voyage_client` level (same
-approach as `tests/modules/resume_parser/test_ai_service.py`) via a
-dependency override on `get_search_service`, so no API key or network
-access is required. Each test seeds its own randomized Company/Job rows
+Embeddings are faked at the `EmbeddingProvider` level (a fake implementing
+the `embed`/`dimensions`/`model_name` contract from
+`app/interfaces/embedding_provider.py`) via a dependency override on
+`get_search_service`, so no API key, network access, or local model
+download is required. Each test seeds its own randomized Company/Job rows
 directly through `AsyncSessionLocal` (job_ingestion exposes no "create job"
 endpoint — jobs are normally created by the crawl pipeline) so tests don't
 need to share or reset database state.
@@ -25,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from httpx import AsyncClient
 
+from app.api.deps import CacheDep, DBSessionDep
 from app.core.config import get_settings
 from app.db.session import AsyncSessionLocal
 from app.main import app
@@ -43,40 +45,42 @@ from app.modules.job_ingestion.models import (
 from app.modules.search.repository import SearchRepository
 from app.modules.search.router import get_search_service
 from app.modules.search.service import SearchService
-from app.services.ai.service import AIService
+from app.services.embedding.service import EmbeddingService
 
 VECTOR_DIMENSIONS = get_settings().VECTOR_DIMENSIONS
 
 
-class _FakeVoyageResult:
-    def __init__(self, embeddings: list[list[float]]) -> None:
-        self.embeddings = embeddings
-
-
-class _FakeVoyageClient:
+class _FakeEmbeddingProvider:
     def __init__(self, embedding: list[float]) -> None:
         self._embedding = embedding
         self.calls: list[dict] = []
 
-    def embed(self, texts, **kwargs):
-        self.calls.append({"texts": texts, **kwargs})
-        return _FakeVoyageResult([self._embedding])
+    @property
+    def dimensions(self) -> int:
+        return len(self._embedding)
+
+    @property
+    def model_name(self) -> str:
+        return "fake-embedding-model"
+
+    async def embed(self, *, text: str, input_type: str = "document") -> list[float]:
+        self.calls.append({"text": text, "input_type": input_type})
+        return self._embedding
 
 
 @pytest.fixture
-def fake_voyage() -> _FakeVoyageClient:
-    return _FakeVoyageClient([0.1] * VECTOR_DIMENSIONS)
+def fake_embedding_provider() -> _FakeEmbeddingProvider:
+    return _FakeEmbeddingProvider([0.1] * VECTOR_DIMENSIONS)
 
 
 @pytest.fixture(autouse=True)
-def _override_search_service(fake_voyage: _FakeVoyageClient):
-    from app.api.deps import CacheDep, DBSessionDep
+def _override_search_service(fake_embedding_provider: _FakeEmbeddingProvider):
+    settings = get_settings()
 
     def _get_search_service(session: DBSessionDep, cache: CacheDep) -> SearchService:
-        ai_service = AIService()
-        ai_service._voyage_client = fake_voyage
+        embedding_service = EmbeddingService(fake_embedding_provider, settings)
         return SearchService(
-            repository=SearchRepository(session), ai_service=ai_service, cache=cache
+            repository=SearchRepository(session), embedding_service=embedding_service, cache=cache
         )
 
     app.dependency_overrides[get_search_service] = _get_search_service
@@ -187,7 +191,7 @@ async def test_keyword_search_finds_job_by_title_token(client: AsyncClient) -> N
 
 @pytest.mark.asyncio
 async def test_semantic_search_finds_job_by_embedding(
-    client: AsyncClient, fake_voyage: _FakeVoyageClient
+    client: AsyncClient, fake_embedding_provider: _FakeEmbeddingProvider
 ) -> None:
     token = _unique("sem")
     job = await _seed_job(title=f"Data Scientist {token}", embedding=[0.1] * VECTOR_DIMENSIONS)
@@ -199,7 +203,7 @@ async def test_semantic_search_finds_job_by_embedding(
     assert str(job.id) in ids
     result = next(item for item in body["data"] if item["id"] == str(job.id))
     assert result["match_score"] is not None
-    assert fake_voyage.calls[-1]["input_type"] == "query"
+    assert fake_embedding_provider.calls[-1]["input_type"] == "query"
 
 
 @pytest.mark.asyncio
@@ -379,7 +383,7 @@ async def test_trending_jobs_within_window(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_repeated_semantic_query_is_served_from_cache(
-    client: AsyncClient, fake_voyage: _FakeVoyageClient
+    client: AsyncClient, fake_embedding_provider: _FakeEmbeddingProvider
 ) -> None:
     token = _unique("cache")
     await _seed_job(title=f"Cached Search {token}", embedding=[0.1] * VECTOR_DIMENSIONS)
@@ -387,8 +391,8 @@ async def test_repeated_semantic_query_is_served_from_cache(
     params = {"q": token, "mode": "semantic"}
     first = await client.get("/api/v1/search", params=params)
     assert first.status_code == 200
-    calls_after_first = len(fake_voyage.calls)
+    calls_after_first = len(fake_embedding_provider.calls)
 
     second = await client.get("/api/v1/search", params=params)
     assert second.status_code == 200
-    assert len(fake_voyage.calls) == calls_after_first
+    assert len(fake_embedding_provider.calls) == calls_after_first

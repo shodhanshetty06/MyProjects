@@ -24,6 +24,14 @@ _TEMPLATES: dict[NotificationEventType, tuple[str, str]] = {
         "Reconnect your Gmail account",
         "{body}",
     ),
+    NotificationEventType.RESUME_READY: (
+        "Your resume is ready",
+        "{body}",
+    ),
+    NotificationEventType.NEW_MATCHING_JOB: (
+        "A new job matches your profile",
+        "{body}",
+    ),
 }
 
 _DEFAULT_SUBJECT = "Notification from AI Job Search Platform"

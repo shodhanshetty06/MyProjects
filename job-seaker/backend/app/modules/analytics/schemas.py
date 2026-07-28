@@ -173,6 +173,12 @@ class AnalyticsSummary(BaseModel):
     average_response_days: float | None
 
 
+class MatchedCompanyCount(BaseModel):
+    company_name: str
+    matches: int
+    average_match_score: float
+
+
 class AnalyticsDashboardResponse(BaseModel):
     generated_at: datetime
     date_from: datetime | None
@@ -193,6 +199,16 @@ class AnalyticsDashboardResponse(BaseModel):
     skill_demand: list[SkillDemandItem]
     response_time: ResponseTimeSeries
     heatmap: ApplicationHeatmap
+
+    # Job Search integration (Section 8) — `saved_jobs_count` is a simple
+    # count on `search.SavedJob`; `average_match_score`/
+    # `top_matched_companies` are computed from
+    # `MatchingRepository.list_matches_for_user`, not a new event-log
+    # pipeline. "Jobs Viewed" has no backend data source and is
+    # intentionally NOT added here (documented limitation, plan section 12).
+    saved_jobs_count: int = 0
+    average_match_score: float | None = None
+    top_matched_companies: list[MatchedCompanyCount] = Field(default_factory=list)
 
 
 class ExportApplicationRow(BaseModel):
@@ -231,6 +247,7 @@ __all__ = [
     "HeatmapCell",
     "ApplicationHeatmap",
     "AnalyticsSummary",
+    "MatchedCompanyCount",
     "AnalyticsDashboardResponse",
     "ExportApplicationRow",
 ]

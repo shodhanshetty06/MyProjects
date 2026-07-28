@@ -1,7 +1,7 @@
-"""Unit tests for `SESEmailSender` — a fake boto3-shaped client records
-`send_email` calls, matching the "fake provider client" convention used by
-`tests/modules/resume_parser/test_ai_service.py` for the Anthropic client.
-No real AWS credentials or network access required.
+"""Unit tests for `SESEmailProvider` — a fake boto3-shaped client records
+`send_email` calls, matching the "fake provider client" convention used
+elsewhere in the test suite. No real AWS credentials or network access
+required.
 """
 
 from __future__ import annotations
@@ -9,7 +9,8 @@ from __future__ import annotations
 import pytest
 from botocore.exceptions import ClientError
 
-from app.services.notification.email_sender import SESEmailSender
+from app.core.config import get_settings
+from app.providers.email.ses_provider import SESEmailProvider
 from app.services.notification.errors import NotificationSendError, TransientNotificationError
 
 
@@ -29,11 +30,12 @@ def _client_error(code: str) -> ClientError:
     return ClientError({"Error": {"Code": code, "Message": "boom"}}, "SendEmail")
 
 
-def test_send_returns_message_id_and_uses_configured_sender() -> None:
+@pytest.mark.asyncio
+async def test_send_returns_message_id_and_uses_configured_sender() -> None:
     fake_client = _FakeSESClient()
-    sender = SESEmailSender(client=fake_client)
+    sender = SESEmailProvider(get_settings(), client=fake_client)
 
-    message_id = sender.send(to="user@example.com", subject="Hello", body_text="Body text")
+    message_id = await sender.send(to="user@example.com", subject="Hello", body_text="Body text")
 
     assert message_id == "ses-message-id-123"
     call = fake_client.calls[0]
@@ -43,18 +45,20 @@ def test_send_returns_message_id_and_uses_configured_sender() -> None:
     assert call["Source"] == sender.sender
 
 
-def test_throttling_error_raises_transient_notification_error() -> None:
+@pytest.mark.asyncio
+async def test_throttling_error_raises_transient_notification_error() -> None:
     fake_client = _FakeSESClient(error=_client_error("Throttling"))
-    sender = SESEmailSender(client=fake_client)
+    sender = SESEmailProvider(get_settings(), client=fake_client)
 
     with pytest.raises(TransientNotificationError):
-        sender.send(to="user@example.com", subject="Hi", body_text="Body")
+        await sender.send(to="user@example.com", subject="Hi", body_text="Body")
 
 
-def test_message_rejected_raises_non_retryable_error() -> None:
+@pytest.mark.asyncio
+async def test_message_rejected_raises_non_retryable_error() -> None:
     fake_client = _FakeSESClient(error=_client_error("MessageRejected"))
-    sender = SESEmailSender(client=fake_client)
+    sender = SESEmailProvider(get_settings(), client=fake_client)
 
     with pytest.raises(NotificationSendError) as exc_info:
-        sender.send(to="user@example.com", subject="Hi", body_text="Body")
+        await sender.send(to="user@example.com", subject="Hi", body_text="Body")
     assert not isinstance(exc_info.value, TransientNotificationError)

@@ -33,14 +33,15 @@ _TRANSIENT_SES_ERROR_CODES = frozenset({"Throttling", "ThrottlingException", "Se
 def classify_ses_exception(exc: Exception) -> NotificationFailureCategory:
     """Classify an exception raised while sending a notification email.
 
-    `SESEmailSender.send` already converts a raw `ClientError` into
-    `TransientNotificationError`/`NotificationSendError` before it reaches a
-    Celery task's except block, so already-typed exceptions are classified
-    via their `category` attribute first — same pattern as
-    `auto_apply/errors.py::classify_exception`. Only a *raw*
-    `botocore.exceptions.ClientError` (matched by its `.response` attribute
-    rather than an isinstance check, so this module doesn't need a hard
-    `botocore` import) falls through to the AWS-error-code check below.
+    `SESEmailProvider.send` (`app/providers/email/ses_provider.py`) already
+    converts a raw `ClientError` into `TransientNotificationError`/
+    `NotificationSendError` before it reaches a Celery task's except block,
+    so already-typed exceptions are classified via their `category`
+    attribute first — same pattern as `auto_apply/errors.py::classify_exception`.
+    Only a *raw* `botocore.exceptions.ClientError` (matched by its
+    `.response` attribute rather than an isinstance check, so this module
+    doesn't need a hard `botocore` import) falls through to the AWS-error-code
+    check below.
     """
     if isinstance(exc, NotificationSendError):
         return exc.category

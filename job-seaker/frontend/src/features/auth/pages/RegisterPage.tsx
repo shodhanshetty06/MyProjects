@@ -6,8 +6,10 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { registerSchema, type RegisterFormValues } from "@/features/auth/schemas";
+import { resolvePostLoginPath } from "@/features/onboarding/api";
 import { errorMessage } from "@/lib/errorMessage";
 import { paths } from "@/routes/paths";
 
@@ -26,7 +28,10 @@ export function RegisterPage() {
     setFormError(null);
     try {
       await registerUser({ email: values.email, password: values.password });
-      navigate(paths.dashboard, { replace: true });
+      // Brand-new accounts have no `UserProfile` row yet, so this always
+      // resolves to `/onboarding` — going through the same status check as
+      // login keeps there being exactly one place that decides this.
+      navigate(await resolvePostLoginPath(), { replace: true });
     } catch (error) {
       setFormError(errorMessage(error, "Couldn't create your account. Try a different email."));
     }
@@ -50,9 +55,8 @@ export function RegisterPage() {
           <label htmlFor="password" className="text-xs font-medium text-ink-secondary">
             Password
           </label>
-          <Input
+          <PasswordInput
             id="password"
-            type="password"
             autoComplete="new-password"
             invalid={!!errors.password}
             {...register("password")}
@@ -64,9 +68,8 @@ export function RegisterPage() {
           <label htmlFor="confirmPassword" className="text-xs font-medium text-ink-secondary">
             Confirm password
           </label>
-          <Input
+          <PasswordInput
             id="confirmPassword"
-            type="password"
             autoComplete="new-password"
             invalid={!!errors.confirmPassword}
             {...register("confirmPassword")}

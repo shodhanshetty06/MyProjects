@@ -55,10 +55,18 @@ class CompanyService:
         company_repository: CompanyRepository,
         intelligence_repository: CompanyIntelligenceRepository,
         ingestion_run_repository: IngestionRunRepository,
+        job_repository: JobRepository,
     ) -> None:
         self.company_repository = company_repository
         self.intelligence_repository = intelligence_repository
         self.ingestion_run_repository = ingestion_run_repository
+        self.job_repository = job_repository
+
+    async def get_avg_salary(self, company_id: uuid.UUID) -> tuple[float | None, str | None]:
+        """Average yearly salary across the company's active postings —
+        Company Intelligence's "Average Salary" signal (Feature 4).
+        Computed on read, never stored, so it's always current."""
+        return await self.job_repository.get_average_yearly_salary(company_id=company_id)
 
     async def register_company(self, payload: CompanyCreateRequest) -> Company:
         normalized_name = _normalize_name(payload.name)

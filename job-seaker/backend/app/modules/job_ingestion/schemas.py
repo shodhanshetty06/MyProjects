@@ -12,7 +12,9 @@ from app.modules.job_ingestion.models import (
     EmploymentType,
     IngestionRunStatus,
     JobStatus,
+    RemotePolicy,
     SalaryPeriod,
+    SeniorityLevel,
     WorkMode,
 )
 
@@ -27,6 +29,10 @@ class CompanyIntelligenceRead(BaseModel):
     hiring_frequency_per_month: float | None
     company_rating: float | None
     hiring_trends: dict | None
+    company_size: str | None
+    funding_stage: str | None
+    remote_policy: RemotePolicy
+    tech_stack: list[str]
 
     model_config = {"from_attributes": True}
 
@@ -36,6 +42,10 @@ class CompanyIntelligenceUpsertRequest(BaseModel):
     ats_identifier: str | None = None
     career_url: str | None = None
     adapter_config: dict = Field(default_factory=dict)
+    company_size: str | None = None
+    funding_stage: str | None = None
+    remote_policy: RemotePolicy = RemotePolicy.UNKNOWN
+    tech_stack: list[str] = Field(default_factory=list)
 
 
 class CompanyCreateRequest(BaseModel):
@@ -71,6 +81,11 @@ class CompanyRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     intelligence: CompanyIntelligenceRead | None = None
+    # Computed from this company's currently-active yearly-salary postings —
+    # not a stored column, so it's never stale (see
+    # `JobRepository.get_average_yearly_salary`).
+    avg_salary_yearly: float | None = None
+    avg_salary_currency: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -112,6 +127,12 @@ class SkillRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class JobQualityReasonRead(BaseModel):
+    label: str
+    positive: bool
+    weight: float
+
+
 class JobRead(BaseModel):
     id: uuid.UUID
     company_id: uuid.UUID
@@ -132,6 +153,18 @@ class JobRead(BaseModel):
     has_embedding: bool = False
     created_at: datetime
     updated_at: datetime
+    # AI Job Understanding (Feature 3)
+    required_skills: list[str]
+    preferred_skills: list[str]
+    responsibilities: list[str]
+    benefits: list[str]
+    tech_stack: list[str]
+    seniority: SeniorityLevel
+    industry: str | None
+    department: str | None
+    # Job Quality Score (Feature 5)
+    quality_score: int | None
+    quality_reasons: list[JobQualityReasonRead]
 
     model_config = {"from_attributes": True}
 
@@ -145,5 +178,6 @@ __all__ = [
     "IngestionRunRead",
     "LocationRead",
     "SkillRead",
+    "JobQualityReasonRead",
     "JobRead",
 ]

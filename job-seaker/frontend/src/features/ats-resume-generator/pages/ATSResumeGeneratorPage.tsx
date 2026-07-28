@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Download, FileStack, Plus, RefreshCw, Sparkles, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { AlertTriangle, Download, FileStack, Plus, RefreshCw, Sparkles, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import { fadeInUp, staggerChildren } from "@/components/motion/variants";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -26,12 +27,17 @@ import {
   getATSResumeVersionDiff,
   listATSResumes,
   listATSResumeVersions,
+  listATSResumeTemplates,
+  setATSResumeVersionTemplate,
 } from "@/features/ats-resume-generator/api";
 import { DiffText } from "@/features/ats-resume-generator/components/DiffText";
+import { TemplatePicker } from "@/features/ats-resume-generator/components/TemplatePicker";
 import type { ATSFileFormat, ATSVersionStatus } from "@/features/ats-resume-generator/types";
 import { useAuth } from "@/features/auth";
+import { getJobDetail } from "@/features/search/api";
 import { listResumes } from "@/features/resume-parser";
 import { cn } from "@/lib/cn";
+import { errorMessage } from "@/lib/errorMessage";
 import { formatEnumLabel } from "@/lib/format";
 import { toast } from "@/stores/toastStore";
 
@@ -41,6 +47,7 @@ export function ATSResumeGeneratorPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const userId = user!.id;
+  const [searchParams] = useSearchParams();
 
   const [createOpen, setCreateOpen] = useState(false);
   const [sourceResumeVersionId, setSourceResumeVersionId] = useState("");
@@ -48,9 +55,31 @@ export function ATSResumeGeneratorPage() {
   const [title, setTitle] = useState("");
   const [jobTitle, setJobTitle] = useState("");
   const [companyName, setCompanyName] = useState("");
+  const [targetJobId, setTargetJobId] = useState<string | null>(null);
   const [selectedAtsResumeId, setSelectedAtsResumeId] = useState<string | null>(null);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [compareTo, setCompareTo] = useState("source");
+  const [templateId, setTemplateId] = useState("modern_ats");
+
+  // Prefills the "optimize for a job" dialog when arriving from a job's
+  // "Generate ATS Resume" quick action (`JobCard`/`JobDetailPage`), which
+  // links here with `?target_job_id=...&job_title=...&company_name=...`.
+  // Best-effort: fetches the job's description too, via search/api's
+  // `getJobDetail`, so the user doesn't have to paste it in manually.
+  useEffect(() => {
+    const jobId = searchParams.get("target_job_id");
+    if (!jobId) return;
+    setTargetJobId(jobId);
+    setJobTitle(searchParams.get("job_title") ?? "");
+    setCompanyName(searchParams.get("company_name") ?? "");
+    setCreateOpen(true);
+    void getJobDetail(jobId)
+      .then((job) => setJobDescription(job.description ?? ""))
+      .catch(() => {
+        // Best-effort prefill only — user can still paste the description manually.
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const resumesQuery = useQuery({
     queryKey: ["resumes", userId, "picker"],
@@ -64,6 +93,13 @@ export function ATSResumeGeneratorPage() {
     queryKey: ["ats-resume-generator", "list", userId],
     queryFn: () => listATSResumes(userId),
   });
+
+  const templatesQuery = useQuery({
+    queryKey: ["ats-resume-generator", "templates"],
+    queryFn: () => listATSResumeTemplates(userId),
+    staleTime: Infinity,
+  });
+  const templates = templatesQuery.data ?? [];
 
   const versionsQuery = useQuery({
     queryKey: ["ats-resume-generator", "versions", selectedAtsResumeId],
@@ -92,6 +128,8 @@ export function ATSResumeGeneratorPage() {
         title: title || null,
         job_title: jobTitle || null,
         company_name: companyName || null,
+        target_job_id: targetJobId,
+        template_id: templateId,
       }),
     onSuccess: (resume) => {
       toast.success("Optimizing your resume", "This usually takes under a minute.");
@@ -103,8 +141,11 @@ export function ATSResumeGeneratorPage() {
       setTitle("");
       setJobTitle("");
       setCompanyName("");
+      setTargetJobId(null);
+      setTemplateId("modern_ats");
     },
-    onError: () => toast.danger("Couldn't start optimization", "Check the job description and try again."),
+    onError: (error) =>
+      toast.danger("Couldn't start optimization", errorMessage(error, "Check the job description and try again.")),
   });
 
   const createVersion = useMutation({
@@ -113,6 +154,17 @@ export function ATSResumeGeneratorPage() {
       void queryClient.invalidateQueries({ queryKey: ["ats-resume-generator", "versions", selectedAtsResumeId] });
       setSelectedVersionId(version.id);
     },
+  });
+
+  const switchTemplate = useMutation({
+    mutationFn: (newTemplateId: string) =>
+      setATSResumeVersionTemplate(userId, selectedAtsResumeId as string, selectedVersionId as string, newTemplateId),
+    onSuccess: () => {
+      toast.success("Switching template", "Re-rendering your DOCX/PDF with the new look.");
+      void queryClient.invalidateQueries({ queryKey: ["ats-resume-generator", "version", selectedAtsResumeId, selectedVersionId] });
+      void queryClient.invalidateQueries({ queryKey: ["ats-resume-generator", "versions", selectedAtsResumeId] });
+    },
+    onError: (error) => toast.danger("Couldn't switch template", errorMessage(error)),
   });
 
   const activateVersion = useMutation({
@@ -250,6 +302,40 @@ export function ATSResumeGeneratorPage() {
 
               {version && version.status === "completed" && (
                 <>
+                  <Card>
+                    <CardContent className="space-y-1 p-5">
+                      <h3 className="text-sm font-semibold text-ink">{version.contact.full_name || "—"}</h3>
+                      <p className="text-xs text-ink-muted">
+                        {[
+                          version.contact.phone,
+                          version.contact.email,
+                          version.contact.linkedin_url,
+                          version.contact.github_url,
+                          version.contact.portfolio_url,
+                          version.contact.location,
+                        ]
+                          .filter(Boolean)
+                          .join("  ·  ") || "No contact details extracted"}
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  {version.validation_warnings.length > 0 && (
+                    <Card className="border-warning-soft bg-warning-soft/40">
+                      <CardContent className="space-y-1.5 p-4">
+                        <div className="flex items-center gap-2 text-sm font-semibold text-warning">
+                          <AlertTriangle className="size-4" aria-hidden />
+                          Review before downloading
+                        </div>
+                        <ul className="list-inside list-disc space-y-0.5 text-xs text-ink-secondary">
+                          {version.validation_warnings.map((warning) => (
+                            <li key={warning}>{warning}</li>
+                          ))}
+                        </ul>
+                      </CardContent>
+                    </Card>
+                  )}
+
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <Card className="flex flex-col items-center gap-2 p-4">
                       <ScoreRing value={version.ats_score ?? 0} size={56} />
@@ -284,13 +370,26 @@ export function ATSResumeGeneratorPage() {
                         <h3 className="mb-1.5 text-sm font-semibold text-ink">Optimized summary</h3>
                         <p className="text-sm text-ink-secondary">{version.optimized_summary || "—"}</p>
                       </div>
-                      <div>
-                        <h3 className="mb-1.5 text-sm font-semibold text-ink">Skills</h3>
-                        <div className="flex flex-wrap gap-1.5">
-                          {version.optimized_skills.map((skill) => (
-                            <Badge key={skill} tone="brand">{skill}</Badge>
-                          ))}
-                        </div>
+                      <div className="space-y-2.5">
+                        <h3 className="text-sm font-semibold text-ink">Technical skills</h3>
+                        {version.grouped_skills.length === 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {version.optimized_skills.map((skill) => (
+                              <Badge key={skill} tone="brand">{skill}</Badge>
+                            ))}
+                          </div>
+                        ) : (
+                          version.grouped_skills.map((group) => (
+                            <div key={group.category}>
+                              <p className="mb-1 text-xs font-medium text-ink-secondary">{group.category}</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {group.skills.map((skill) => (
+                                  <Badge key={skill} tone="brand">{skill}</Badge>
+                                ))}
+                              </div>
+                            </div>
+                          ))
+                        )}
                       </div>
                       <div className="grid gap-4 sm:grid-cols-2">
                         <div>
@@ -314,6 +413,23 @@ export function ATSResumeGeneratorPage() {
                           </div>
                         </div>
                       </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardContent className="p-5">
+                      <h3 className="mb-3 text-sm font-semibold text-ink">Template</h3>
+                      <TemplatePicker
+                        templates={templates}
+                        value={version.template_id}
+                        disabled={switchTemplate.isPending}
+                        onChange={(newTemplateId) => {
+                          if (newTemplateId !== version.template_id) switchTemplate.mutate(newTemplateId);
+                        }}
+                      />
+                      <p className="mt-2 text-xs text-ink-muted">
+                        Switching re-renders your DOCX/PDF with the new look — no re-optimization needed.
+                      </p>
                     </CardContent>
                   </Card>
 
@@ -393,6 +509,10 @@ export function ATSResumeGeneratorPage() {
             value={jobDescription}
             onChange={(e) => setJobDescription(e.target.value)}
           />
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-ink-secondary">Template</label>
+            <TemplatePicker templates={templates} value={templateId} onChange={setTemplateId} />
+          </div>
         </div>
       </Dialog>
     </div>

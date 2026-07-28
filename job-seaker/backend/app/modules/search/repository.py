@@ -27,6 +27,8 @@ from app.modules.job_ingestion.models import (
     Skill,
     job_skill,
 )
+from app.modules.matching.models import ResumeJobMatch
+from app.modules.search.models import SavedJob
 from app.modules.search.schemas import ExperienceLevel, SearchFilters, SearchSortBy, SortDirection
 from app.modules.search.scoring import EXPERIENCE_LEVEL_TITLE_PATTERNS, date_posted_cutoff
 from app.repositories.base import BaseRepository
@@ -221,6 +223,101 @@ class SearchRepository(BaseRepository[Job]):
         jobs = result.scalars().unique().all()
         return {job.id: job for job in jobs}
 
+    # --- job-feed aggregate counts (Section 4) ------------------------------------
+
+    async def count_jobs_posted_since(self, *, since: datetime) -> int:
+        stmt = select(func.count(Job.id)).where(
+            Job.status == JobStatus.ACTIVE, Job.deleted_at.is_(None), Job.posted_at >= since
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one()
+
+    async def count_distinct_hiring_companies(self, *, since: datetime) -> int:
+        stmt = select(func.count(func.distinct(Job.company_id))).where(
+            Job.status == JobStatus.ACTIVE, Job.deleted_at.is_(None), Job.posted_at >= since
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one()
+
+    async def get_hiring_frequency_by_company_ids(
+        self, company_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, float | None]:
+        """Batch `company_id -> CompanyIntelligence.hiring_frequency_per_month`
+        for `heuristics.compute_hiring_probability`'s cadence input — one
+        query per feed page instead of one query per job card.
+        """
+        if not company_ids:
+            return {}
+        stmt = select(
+            CompanyIntelligence.company_id, CompanyIntelligence.hiring_frequency_per_month
+        ).where(CompanyIntelligence.company_id.in_(company_ids))
+        result = await self.session.execute(stmt)
+        return {row[0]: (float(row[1]) if row[1] is not None else None) for row in result.all()}
+
+    async def get_company_quality_by_company_ids(
+        self, company_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, float | None]:
+        """Batch `company_id -> CompanyIntelligence.company_rating` (0.00-5.00
+        scale, `None` if never populated) for `ranking.compute_company_quality`.
+        Rescaling to 0-100 and the "no rating on file" fallback both happen
+        in the pure `ranking` module, not here — this stays a plain column
+        fetch, same convention as `get_hiring_frequency_by_company_ids`.
+        """
+        if not company_ids:
+            return {}
+        stmt = select(CompanyIntelligence.company_id, CompanyIntelligence.company_rating).where(
+            CompanyIntelligence.company_id.in_(company_ids)
+        )
+        result = await self.session.execute(stmt)
+        return {row[0]: (float(row[1]) if row[1] is not None else None) for row in result.all()}
+
+    async def get_avg_job_quality_by_company_ids(
+        self, company_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, float | None]:
+        """Batch `company_id -> AVG(Job.quality_score)` across that company's
+        active postings — the fallback signal `ranking.compute_company_quality`
+        uses when no `CompanyIntelligence.company_rating` has been populated
+        yet (most companies, today), since `Job.quality_score` is already
+        computed for every job (`job_ingestion/quality.py`) and needs no new
+        data source.
+        """
+        if not company_ids:
+            return {}
+        stmt = (
+            select(Job.company_id, func.avg(Job.quality_score))
+            .where(
+                Job.company_id.in_(company_ids),
+                Job.status == JobStatus.ACTIVE,
+                Job.deleted_at.is_(None),
+                Job.quality_score.is_not(None),
+            )
+            .group_by(Job.company_id)
+        )
+        result = await self.session.execute(stmt)
+        return {row[0]: (float(row[1]) if row[1] is not None else None) for row in result.all()}
+
+    async def get_competition_counts(
+        self, job_ids: Sequence[uuid.UUID], *, min_match_score: float
+    ) -> dict[uuid.UUID, int]:
+        """Batch `job_id -> count of ResumeJobMatch rows scoring >=
+        min_match_score` — the only in-schema proxy for "how many other
+        strong candidates is this job competing against" (no scraped
+        applicant-count exists anywhere). Bounded to the job_ids on the
+        current page/candidate set, never a full-table scan.
+        """
+        if not job_ids:
+            return {}
+        stmt = (
+            select(ResumeJobMatch.job_id, func.count(ResumeJobMatch.id))
+            .where(
+                ResumeJobMatch.job_id.in_(job_ids),
+                ResumeJobMatch.match_score >= min_match_score,
+            )
+            .group_by(ResumeJobMatch.job_id)
+        )
+        result = await self.session.execute(stmt)
+        return {row[0]: row[1] for row in result.all()}
+
     # --- autocomplete / suggestions ----------------------------------------------
 
     async def autocomplete_titles(self, *, prefix: str, limit: int) -> list[str]:
@@ -280,9 +377,67 @@ class SearchRepository(BaseRepository[Job]):
             .where(
                 Job.status == JobStatus.ACTIVE, Job.deleted_at.is_(None), Job.posted_at >= cutoff
             )
-            .options(selectinload(Job.company), selectinload(Job.location))
+            # `Job.skills` is now eager-loaded too (not just company/location)
+            # — `search.job_feed_service.JobFeedService` reuses
+            # `SearchService.to_result` (which reads `job.skills`) for the
+            # `trending` feed mode, on top of this method's original caller
+            # (`GET /search/trending/jobs`, whose `TrendingJob` schema never
+            # needed skills, so this gap was invisible until now).
+            .options(*_JOB_EAGER_LOAD)
             .order_by(Job.posted_at.desc(), hiring_frequency.desc().nullslast())
             .limit(limit)
         )
         result = await self.session.execute(stmt)
         return result.scalars().unique().all()
+
+
+class SavedJobRepository(BaseRepository[SavedJob]):
+    """Data access for `SavedJob` bookmarks — one repository per module,
+    following `SearchRepository`/`MatchingRepository`.
+    """
+
+    model = SavedJob
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session)
+
+    async def get_by_user_and_job(
+        self, *, user_id: uuid.UUID, job_id: uuid.UUID
+    ) -> SavedJob | None:
+        stmt = select(SavedJob).where(SavedJob.user_id == user_id, SavedJob.job_id == job_id)
+        result = await self.session.execute(stmt)
+        return result.scalars().one_or_none()
+
+    async def list_for_user(
+        self, *, user_id: uuid.UUID, offset: int, limit: int
+    ) -> tuple[Sequence[SavedJob], int]:
+        base = select(SavedJob).where(SavedJob.user_id == user_id)
+        stmt = base.order_by(SavedJob.created_at.desc()).offset(offset).limit(limit)
+        result = await self.session.execute(stmt)
+        saved_jobs = result.scalars().all()
+
+        count_stmt = select(func.count()).select_from(base.subquery())
+        total = (await self.session.execute(count_stmt)).scalar_one()
+        return saved_jobs, total
+
+    async def delete_by_user_and_job(self, *, user_id: uuid.UUID, job_id: uuid.UUID) -> bool:
+        saved_job = await self.get_by_user_and_job(user_id=user_id, job_id=job_id)
+        if saved_job is None:
+            return False
+        await self.session.delete(saved_job)
+        await self.session.flush()
+        return True
+
+    async def list_job_ids_for_user(
+        self, *, user_id: uuid.UUID, job_ids: Sequence[uuid.UUID]
+    ) -> set[uuid.UUID]:
+        """Batch existence check for `is_saved` — one query per feed page
+        instead of one query per job card.
+        """
+        if not job_ids:
+            return set()
+        stmt = select(SavedJob.job_id).where(
+            SavedJob.user_id == user_id, SavedJob.job_id.in_(job_ids)
+        )
+        result = await self.session.execute(stmt)
+        return set(result.scalars().all())

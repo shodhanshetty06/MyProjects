@@ -10,6 +10,7 @@ and score across the router boundary) keeps that fusion in one place.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 from app.core.config import Settings, get_settings
@@ -19,6 +20,7 @@ from app.modules.job_ingestion.models import Job
 from app.modules.search.repository import SearchRepository
 from app.modules.search.schemas import (
     AutocompleteSuggestion,
+    JobQualityReason,
     SearchFilters,
     SearchMode,
     SearchResultCompany,
@@ -33,7 +35,7 @@ from app.modules.search.schemas import (
 )
 from app.modules.search.scoring import ScoreBreakdown, classify_experience_level, fuse_scores
 from app.schemas.common import PaginationParams
-from app.services.ai.service import AIService
+from app.services.embedding.service import EmbeddingService
 
 logger = get_logger(__name__)
 
@@ -44,11 +46,11 @@ class SearchService:
     def __init__(
         self,
         repository: SearchRepository,
-        ai_service: AIService,
+        embedding_service: EmbeddingService,
         cache: CacheClient,
     ) -> None:
         self._repository = repository
-        self._ai_service = ai_service
+        self._embedding_service = embedding_service
         self._cache = cache
         self._settings: Settings = get_settings()
 
@@ -77,7 +79,7 @@ class SearchService:
                 limit=pagination.page_size,
             )
             total = await self._repository.count_filtered(filters=filters)
-            items = [self._to_result(job, None) for job in jobs]
+            items = [self.to_result(job, None) for job in jobs]
         else:
             items, total = await self._search_by_query(filters, pagination)
 
@@ -100,21 +102,31 @@ class SearchService:
         keyword_raw: dict[uuid.UUID, float] = {}
         semantic_raw: dict[uuid.UUID, float] = {}
 
-        if filters.mode in (SearchMode.KEYWORD, SearchMode.HYBRID):
-            keyword_raw = dict(
-                await self._repository.search_keyword_candidates(
-                    filters=filters,
-                    query_text=query,
-                    limit=self._settings.SEARCH_KEYWORD_CANDIDATE_LIMIT,
-                )
-            )
-
+        needs_keyword = filters.mode in (SearchMode.KEYWORD, SearchMode.HYBRID)
         needs_semantic = (
             filters.mode in (SearchMode.SEMANTIC, SearchMode.HYBRID)
             or filters.sort_by == SearchSortBy.MATCH_SCORE
         )
-        if needs_semantic:
-            embedding = await self._ai_service.generate_embedding(text=query, input_type="query")
+
+        if needs_keyword and needs_semantic:
+            # The keyword-candidate DB query and embedding generation don't
+            # depend on each other's result and touch different resources —
+            # `generate_embedding` only hits Redis (cache-aside) and a local
+            # CPU model via `asyncio.to_thread`, never this request's DB
+            # session — so they're safe to run concurrently. The semantic
+            # DB query below can't join this gather: it needs `embedding`
+            # first, and it must never overlap the keyword DB query since
+            # both share this request's single `AsyncSession`, which
+            # SQLAlchemy does not allow two coroutines to drive at once.
+            keyword_pairs, embedding = await asyncio.gather(
+                self._repository.search_keyword_candidates(
+                    filters=filters,
+                    query_text=query,
+                    limit=self._settings.SEARCH_KEYWORD_CANDIDATE_LIMIT,
+                ),
+                self._embedding_service.generate_embedding(text=query, input_type="query"),
+            )
+            keyword_raw = dict(keyword_pairs)
             semantic_raw = dict(
                 await self._repository.search_semantic_candidates(
                     filters=filters,
@@ -122,6 +134,26 @@ class SearchService:
                     limit=self._settings.SEARCH_SEMANTIC_CANDIDATE_LIMIT,
                 )
             )
+        else:
+            if needs_keyword:
+                keyword_raw = dict(
+                    await self._repository.search_keyword_candidates(
+                        filters=filters,
+                        query_text=query,
+                        limit=self._settings.SEARCH_KEYWORD_CANDIDATE_LIMIT,
+                    )
+                )
+            if needs_semantic:
+                embedding = await self._embedding_service.generate_embedding(
+                    text=query, input_type="query"
+                )
+                semantic_raw = dict(
+                    await self._repository.search_semantic_candidates(
+                        filters=filters,
+                        query_embedding=embedding,
+                        limit=self._settings.SEARCH_SEMANTIC_CANDIDATE_LIMIT,
+                    )
+                )
 
         scores = fuse_scores(
             keyword_raw,
@@ -152,7 +184,7 @@ class SearchService:
         page_ids = ordered_ids[pagination.offset : pagination.offset + pagination.page_size]
         jobs_by_id = await self._repository.fetch_jobs_by_ids(page_ids)
         items = [
-            self._to_result(jobs_by_id[job_id], scores.get(job_id))
+            self.to_result(jobs_by_id[job_id], scores.get(job_id))
             for job_id in page_ids
             if job_id in jobs_by_id
         ]
@@ -170,9 +202,15 @@ class SearchService:
         )
         total = len(ordered_jobs)
         page = ordered_jobs[pagination.offset : pagination.offset + pagination.page_size]
-        return [self._to_result(job, scores.get(job.id)) for job in page], total
+        return [self.to_result(job, scores.get(job.id)) for job in page], total
 
-    def _to_result(self, job: Job, scores: ScoreBreakdown | None) -> SearchResultItem:
+    def to_result(self, job: Job, scores: ScoreBreakdown | None) -> SearchResultItem:
+        """Build a `SearchResultItem` from an ORM `Job` (+ optional fused
+        score). Public (not `_to_result`) because `search.job_feed_service`
+        reuses this exact mapping when composing `JobFeedItem`s — the single
+        place Job->API-shape mapping lives, so the feed's base fields never
+        drift from plain search's.
+        """
         experience_level = None
         if self._settings.SEARCH_EXPERIENCE_LEVEL_HEURISTIC_ENABLED:
             experience_level = classify_experience_level(job.title)
@@ -193,6 +231,12 @@ class SearchService:
             relevance_score=scores.hybrid_score if scores else None,
             match_score=scores.semantic_score if scores else None,
             keyword_score=scores.keyword_score if scores else None,
+            description=job.description or "",
+            source_url=job.source_url or "",
+            quality_score=job.quality_score,
+            quality_reasons=[JobQualityReason(**reason) for reason in job.quality_reasons],
+            seniority=job.seniority,
+            tech_stack=job.tech_stack,
         )
 
     # --- autocomplete / suggestions -------------------------------------------------

@@ -245,6 +245,23 @@ class MatchingRepository(BaseRepository[ResumeJobMatch]):
         result = await self.session.execute(stmt)
         return result.scalars().one_or_none()
 
+    async def get_match_by_user_and_job(
+        self, *, user_id: uuid.UUID, job_id: uuid.UUID
+    ) -> ResumeJobMatch | None:
+        """Most-recently-updated match for a `(user_id, job_id)` pair — used
+        by `search.job_feed_service.JobFeedService.get_why_score`, which
+        only has a job id (not the resume_version_id half of the unique
+        key) to look up from.
+        """
+        stmt = (
+            select(ResumeJobMatch)
+            .where(ResumeJobMatch.user_id == user_id, ResumeJobMatch.job_id == job_id)
+            .order_by(ResumeJobMatch.updated_at.desc())
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().first()
+
     @staticmethod
     def _matches_for_resume_base_stmt(*, resume_version_id: uuid.UUID, user_id: uuid.UUID):
         """Pure query builder (no execution) — the ownership predicate every

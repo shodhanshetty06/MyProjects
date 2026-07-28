@@ -15,16 +15,25 @@ from __future__ import annotations
 
 import uuid
 from asyncio import run as run_async
+from asyncio import to_thread
+from io import BytesIO
+
+from pypdf import PdfReader
+from sqlalchemy.exc import OperationalError
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.session import AsyncSessionLocal
-from app.integrations.s3_client import S3Storage, get_s3_client
-from app.modules.ats_resume_generator import documents, scoring
+from app.dependency_injection.container import get_container
+from app.modules.ats_resume_generator import scoring
+from app.modules.ats_resume_generator.content import build_resume_content
+from app.modules.ats_resume_generator.docx_renderer import render_docx
 from app.modules.ats_resume_generator.models import ATSFileFormat, ATSVersionStatus
+from app.modules.ats_resume_generator.pdf_converter import convert_docx_to_pdf
 from app.modules.ats_resume_generator.repository import ATSResumeVersionRepository
 from app.modules.ats_resume_generator.schemas import OptimizedContent
-from app.services.ai.service import AIService
+from app.modules.ats_resume_generator.templates import get_template
+from app.modules.ats_resume_generator.validation import check_page_overflow, validate_resume_content
 from app.workers.base_task import BaseTask
 from app.workers.celery_app import celery_app
 
@@ -45,7 +54,12 @@ OPTIMIZE_SYSTEM_PROMPT = (
     "or outcomes beyond what the original text states — only improve phrasing, clarity, and "
     "keyword alignment of what's already there.\n"
     "4. Separately list important keywords (skills/technologies/terms) mentioned in the job "
-    "description — these are for scoring only and do not need to all appear in the rewritten text."
+    "description — these are for scoring only and do not need to all appear in the rewritten text.\n"
+    "5. `grouped_skills` must be a strict repartition of `skills` — every skill in `skills` "
+    "appears in exactly one category of `grouped_skills`, and no category may contain a skill "
+    "that isn't in `skills`. Choose categories for clarity (e.g. 'Languages', 'Frameworks & "
+    "Libraries', 'Tools & Platforms', 'Databases'), not exhaustiveness — a handful of clear "
+    "groups beats many overlapping ones."
 )
 
 
@@ -76,14 +90,64 @@ def _build_optimize_prompt(
     )
 
 
-@celery_app.task(base=BaseTask, bind=True, name="ats_resume_generator.optimize")
+async def _mark_failed_best_effort(version_id: uuid.UUID, error_message: str) -> None:
+    """Last-resort write when a task exhausts its DB-connection retries — a
+    fresh session/pool checkout, since whatever session the failed attempt
+    was using may itself be the thing that couldn't get a connection. Without
+    this, a version that never got a session at all (see `_generate_ats_resume_files`'s
+    initial fetch, which sits before its own try/except) stays stuck at
+    `optimizing`/`generating_files` forever: `POLL_STATUSES` on the frontend
+    (`GenerateAtsResumeDialog.tsx`, `ATSResumeGeneratorPage.tsx`) never stops
+    polling, so the user just watches a spinner with no way to know it's dead.
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            repo = ATSResumeVersionRepository(session)
+            version = await repo.get_by_id(version_id=version_id)
+            if version is not None and version.status != ATSVersionStatus.COMPLETED:
+                await repo.update(version, status=ATSVersionStatus.FAILED, error_message=error_message)
+                await session.commit()
+    except Exception:
+        logger.error(
+            "Could not mark ATS resume version failed after retry exhaustion",
+            extra={"extra_fields": {"version_id": str(version_id)}},
+        )
+
+
+@celery_app.task(
+    base=BaseTask,
+    bind=True,
+    name="ats_resume_generator.optimize",
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=30,
+    max_retries=5,
+)
 def optimize_ats_resume_task(self, version_id: str) -> None:  # noqa: ANN001 -- Celery `self`
-    run_async(_optimize_ats_resume(uuid.UUID(version_id)))
+    try:
+        run_async(_optimize_ats_resume(uuid.UUID(version_id)))
+    except OperationalError:
+        if self.request.retries >= self.max_retries:
+            run_async(_mark_failed_best_effort(uuid.UUID(version_id), "Database unavailable — please try again."))
+        raise
 
 
-@celery_app.task(base=BaseTask, bind=True, name="ats_resume_generator.generate_files")
+@celery_app.task(
+    base=BaseTask,
+    bind=True,
+    name="ats_resume_generator.generate_files",
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=30,
+    max_retries=5,
+)
 def generate_ats_resume_files_task(self, version_id: str) -> None:  # noqa: ANN001
-    run_async(_generate_ats_resume_files(uuid.UUID(version_id)))
+    try:
+        run_async(_generate_ats_resume_files(uuid.UUID(version_id)))
+    except OperationalError:
+        if self.request.retries >= self.max_retries:
+            run_async(_mark_failed_best_effort(uuid.UUID(version_id), "Database unavailable — please try again."))
+        raise
 
 
 async def _optimize_ats_resume(version_id: uuid.UUID) -> None:
@@ -117,7 +181,7 @@ async def _optimize_ats_resume(version_id: uuid.UUID) -> None:
                 raw_resume_text=raw_text,
             )
 
-            ai_service = AIService()
+            ai_service = get_container().resolve("ai_service")
             extracted = await ai_service.extract_structured(
                 text=prompt,
                 schema=OptimizedContent.model_json_schema(),
@@ -162,6 +226,7 @@ async def _optimize_ats_resume(version_id: uuid.UUID) -> None:
                 status=ATSVersionStatus.GENERATING_FILES,
                 optimized_summary=optimized.summary,
                 optimized_skills=optimized.skills,
+                grouped_skills=[item.model_dump() for item in optimized.grouped_skills],
                 optimized_projects=optimized_projects,
                 keywords=optimized.keywords,
                 matched_keywords=keyword_result.matched,
@@ -173,7 +238,7 @@ async def _optimize_ats_resume(version_id: uuid.UUID) -> None:
                     "structure_score": round(structure_result.score, 2),
                     "structure_checks": structure_result.checks,
                 },
-                model_used=settings.ANTHROPIC_MODEL,
+                model_used=ai_service.model_name,
                 error_message=None,
             )
             await session.commit()
@@ -208,44 +273,65 @@ async def _generate_ats_resume_files(version_id: uuid.UUID) -> None:
             return
 
         try:
-            content = documents.ATSDocumentContent(
-                title=version.ats_resume.title,
-                summary=version.optimized_summary,
-                skills=version.optimized_skills,
-                experience=version.experience,
-                projects=version.optimized_projects,
-                education=version.education,
-                certifications=version.certifications,
-                languages=version.languages,
-                achievements=version.achievements,
-            )
-            docx_bytes = documents.generate_docx(content)
-            pdf_bytes = documents.generate_pdf(content)
+            content = build_resume_content(version)
+            validation_result = validate_resume_content(content)
+            if not validation_result.passed:
+                await repo.update(
+                    version,
+                    status=ATSVersionStatus.FAILED,
+                    error_message="; ".join(validation_result.errors),
+                    validation_warnings=validation_result.warnings,
+                )
+                await session.commit()
+                logger.warning(
+                    "ATS resume file generation blocked by validation",
+                    extra={
+                        "extra_fields": {
+                            "version_id": str(version_id),
+                            "errors": validation_result.errors,
+                        }
+                    },
+                )
+                return
 
-            s3_storage = S3Storage(client=get_s3_client())
+            template = get_template(version.template_id)
+            docx_bytes = render_docx(content, template)
+            pdf_bytes = await to_thread(convert_docx_to_pdf, docx_bytes)
+
+            warnings = list(validation_result.warnings)
+            overflow_warning = check_page_overflow(len(PdfReader(BytesIO(pdf_bytes)).pages))
+            if overflow_warning:
+                warnings.append(overflow_warning)
+
+            storage_provider = get_container().resolve("storage_provider")
             user_id = version.ats_resume.user_id
             ats_resume_id = version.ats_resume_id
 
             docx_key = _s3_key(user_id, ats_resume_id, version.id, ATSFileFormat.DOCX)
             pdf_key = _s3_key(user_id, ats_resume_id, version.id, ATSFileFormat.PDF)
-            s3_storage.upload_bytes(docx_bytes, docx_key)
-            s3_storage.upload_bytes(pdf_bytes, pdf_key)
+            storage_provider.upload_bytes(docx_bytes, docx_key)
+            storage_provider.upload_bytes(pdf_bytes, pdf_key)
 
             await repo.add_file(
                 ats_resume_version_id=version.id,
                 format=ATSFileFormat.DOCX,
-                s3_bucket=s3_storage.bucket,
+                s3_bucket=storage_provider.bucket,
                 s3_key=docx_key,
                 file_size_bytes=len(docx_bytes),
             )
             await repo.add_file(
                 ats_resume_version_id=version.id,
                 format=ATSFileFormat.PDF,
-                s3_bucket=s3_storage.bucket,
+                s3_bucket=storage_provider.bucket,
                 s3_key=pdf_key,
                 file_size_bytes=len(pdf_bytes),
             )
-            await repo.update(version, status=ATSVersionStatus.COMPLETED, error_message=None)
+            await repo.update(
+                version,
+                status=ATSVersionStatus.COMPLETED,
+                error_message=None,
+                validation_warnings=warnings,
+            )
             await session.commit()
         except Exception as exc:
             await session.rollback()
@@ -260,4 +346,18 @@ async def _generate_ats_resume_files(version_id: uuid.UUID) -> None:
     logger.info(
         "ATS resume files generated",
         extra={"extra_fields": {"version_id": str(version_id)}},
+    )
+
+    # Smart Trigger: ATS Resume Generated -> update workspace. The version is
+    # already stored (above) and Auto Apply already prefers a COMPLETED ATS
+    # version over a plain resume (`auto_apply.resume_selection.select_resume`)
+    # — no further plumbing needed there.
+    from app.modules.workspace import realtime as workspace_realtime
+
+    await workspace_realtime.publish_workspace_event(
+        user_id,
+        {
+            "type": "ats_resume_ready",
+            "ats_resume_version_id": str(version_id),
+        },
     )

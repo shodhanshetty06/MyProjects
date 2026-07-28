@@ -1,137 +1,67 @@
-"""AI service — the single integration point for LLM-backed capabilities
-used across modules: structured extraction (Claude) and text embeddings
-(Voyage AI, since the Claude API has no embeddings endpoint).
+"""AI service — the single integration point every module uses for
+LLM-backed capabilities (structured extraction, free-form chat). Never
+imports a provider SDK directly; it wraps whatever `AIProvider` its
+constructor was given (see `app/factories/ai_provider_factory.py`) and adds
+provider-agnostic retry behavior on top.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
+from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from anthropic import AsyncAnthropic
-from voyageai import Client as VoyageClient
-
-from app.core.config import get_settings
-from app.core.exceptions import ServiceUnavailableError
+from app.core.config import Settings
+from app.core.exceptions import TransientProviderError
 from app.core.logging import get_logger
+from app.interfaces.ai_provider import AIProvider
 
 logger = get_logger(__name__)
 
 
 class AIService:
-    """Coordinates all LLM/embedding provider calls for the platform.
+    """Retries transient provider failures; everything else (bad config,
+    model refusal, invalid response) is not retried and propagates as-is —
+    retrying those would just waste time reproducing the same failure."""
 
-    Provider clients are constructed lazily (on first use, not in
-    `__init__`) — `voyageai.Client` raises `AuthenticationError` immediately
-    if no API key is configured, and eagerly constructing it here would mean
-    a deployment (or test) that only needs Claude extraction couldn't
-    instantiate this service without a Voyage key too.
-    """
-
-    def __init__(self) -> None:
-        self._settings = get_settings()
-        self._anthropic_client: AsyncAnthropic | None = None
-        self._voyage_client: VoyageClient | None = None
+    def __init__(self, provider: AIProvider, settings: Settings) -> None:
+        self._provider = provider
+        self._max_retries = settings.AI_PROVIDER_MAX_RETRIES
+        self._backoff_seconds = settings.AI_PROVIDER_RETRY_BACKOFF_SECONDS
 
     @property
-    def _anthropic(self) -> AsyncAnthropic:
-        if self._anthropic_client is None:
-            self._anthropic_client = AsyncAnthropic(api_key=self._settings.ANTHROPIC_API_KEY)
-        return self._anthropic_client
+    def model_name(self) -> str:
+        return self._provider.model_name
 
-    @property
-    def _voyage(self) -> VoyageClient:
-        if self._voyage_client is None:
-            self._voyage_client = VoyageClient(api_key=self._settings.VOYAGE_API_KEY)
-        return self._voyage_client
-
-    async def generate_embedding(self, *, text: str, input_type: str = "document") -> list[float]:
-        """Generate a vector embedding for the given text via Voyage AI.
-
-        `input_type` should be `"document"` when embedding content being
-        indexed (resumes, job postings) and `"query"` when embedding a
-        search query — Voyage's asymmetric embeddings improve retrieval
-        quality when the two sides are marked accordingly.
-
-        The Voyage SDK is synchronous, so the call is offloaded to a thread
-        to avoid blocking the event loop.
-        """
-        try:
-            result = await asyncio.to_thread(
-                self._voyage.embed,
-                [text],
-                model=self._settings.VOYAGE_MODEL,
-                input_type=input_type,
-                output_dimension=self._settings.VECTOR_DIMENSIONS,
-            )
-        except Exception as exc:
-            logger.error(
-                "Voyage embedding request failed",
-                extra={"extra_fields": {"error": str(exc)}},
-            )
-            raise ServiceUnavailableError("Embedding provider is unavailable.") from exc
-        return result.embeddings[0]
+    def _new_retryer(self) -> AsyncRetrying:
+        # A fresh AsyncRetrying per call — tenacity keeps per-attempt state on
+        # the instance itself, so sharing one across concurrent calls (two
+        # coroutines awaiting the same AIService instance at once) would let
+        # them clobber each other's retry counters.
+        return AsyncRetrying(
+            retry=retry_if_exception_type(TransientProviderError),
+            stop=stop_after_attempt(self._max_retries),
+            wait=wait_exponential(multiplier=self._backoff_seconds),
+            reraise=True,
+        )
 
     async def extract_structured(
         self, *, text: str, schema: dict, system: str, max_tokens: int = 8000
     ) -> dict:
-        """Extract structured JSON from `text` per the given JSON schema.
-
-        Generic by design (not resume-specific) so other modules can reuse
-        it for their own structured-extraction needs.
-        """
-        try:
-            response = await self._anthropic.messages.create(
-                model=self._settings.ANTHROPIC_MODEL,
-                max_tokens=max_tokens,
-                system=system,
-                output_config={"format": {"type": "json_schema", "schema": schema}},
-                messages=[{"role": "user", "content": text}],
-            )
-        except Exception as exc:
-            logger.error(
-                "Claude structured extraction request failed",
-                extra={"extra_fields": {"error": str(exc)}},
-            )
-            raise ServiceUnavailableError("Extraction provider is unavailable.") from exc
-
-        if response.stop_reason == "refusal":
-            raise ServiceUnavailableError("Extraction was refused by the model.")
-
-        text_block = next((block for block in response.content if block.type == "text"), None)
-        if text_block is None:
-            raise ServiceUnavailableError("Extraction provider returned no content.")
-        return json.loads(text_block.text)
+        async for attempt in self._new_retryer():
+            with attempt:
+                return await self._provider.extract_structured(
+                    text=text, schema=schema, system=system, max_tokens=max_tokens
+                )
+        raise AssertionError("unreachable")  # tenacity always returns or raises above
 
     async def complete_chat(
         self, *, system: str, messages: list[dict[str, str]], max_tokens: int = 1500
     ) -> str:
-        """Generate a free-form conversational reply from Claude.
+        async for attempt in self._new_retryer():
+            with attempt:
+                return await self._provider.complete_chat(
+                    system=system, messages=messages, max_tokens=max_tokens
+                )
+        raise AssertionError("unreachable")
 
-        Unlike `extract_structured`, the response is plain text rather than
-        JSON — for conversational assistants where the reply isn't meant to
-        fit a fixed schema. `messages` is oldest-first, each a
-        `{"role": "user"|"assistant", "content": str}` dict. Generic by
-        design so any module needing free-form chat completion can reuse it.
-        """
-        try:
-            response = await self._anthropic.messages.create(
-                model=self._settings.ANTHROPIC_MODEL,
-                max_tokens=max_tokens,
-                system=system,
-                messages=messages,
-            )
-        except Exception as exc:
-            logger.error(
-                "Claude chat completion request failed",
-                extra={"extra_fields": {"error": str(exc)}},
-            )
-            raise ServiceUnavailableError("Chat completion provider is unavailable.") from exc
 
-        if response.stop_reason == "refusal":
-            raise ServiceUnavailableError("Response was refused by the model.")
-
-        text_block = next((block for block in response.content if block.type == "text"), None)
-        if text_block is None:
-            raise ServiceUnavailableError("Chat completion provider returned no content.")
-        return text_block.text
+__all__ = ["AIService"]

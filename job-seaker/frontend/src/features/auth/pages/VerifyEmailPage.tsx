@@ -24,7 +24,7 @@ export function VerifyEmailPage() {
         description="Email verification isn't implemented on this backend yet - your account works normally without it."
       />
 
-      <Link to={user ? paths.dashboard : paths.login} className="mt-6 block">
+      <Link to={user ? paths.workspace : paths.login} className="mt-6 block">
         <Button className="w-full">{user ? "Continue to app" : "Back to log in"}</Button>
       </Link>
     </div>

@@ -29,7 +29,15 @@ export function CompanyCard({ company }: { company: CompanyRead }) {
       <Link to={paths.companyDetail(company.id)} className="flex flex-col gap-3">
         <div className="flex size-11 items-center justify-center overflow-hidden rounded-[var(--radius-md)] bg-surface-2 text-ink-muted">
           {company.logo_url ? (
-            <img src={company.logo_url} alt="" className="size-full object-cover" />
+            <img
+              src={company.logo_url}
+              alt=""
+              width={44}
+              height={44}
+              loading="lazy"
+              decoding="async"
+              className="size-full object-cover"
+            />
           ) : (
             <Building2 className="size-5" aria-hidden />
           )}

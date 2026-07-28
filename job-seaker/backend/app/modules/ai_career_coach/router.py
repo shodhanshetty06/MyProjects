@@ -6,7 +6,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import CurrentUserIdDep, DBSessionDep
+from app.api.deps import AIServiceDep, CurrentUserIdDep, DBSessionDep
 from app.modules.ai_career_coach.models import CareerInsightType
 from app.modules.ai_career_coach.repository import (
     CareerInsightRepository,
@@ -42,19 +42,20 @@ from app.modules.ai_career_coach.schemas import (
 )
 from app.modules.ai_career_coach.service import AICareerCoachService
 from app.schemas.common import BaseResponse, PaginatedResponse, PaginationMeta, PaginationParams
-from app.services.ai.service import AIService
 
 router = APIRouter(prefix="/career-coach", tags=["AI Career Coach"])
 
 
-def get_ai_career_coach_service(session: DBSessionDep) -> AICareerCoachService:
+def get_ai_career_coach_service(
+    session: DBSessionDep, ai_service: AIServiceDep
+) -> AICareerCoachService:
     return AICareerCoachService(
         insight_repository=CareerInsightRepository(session),
         conversation_repository=CoachConversationRepository(session),
         message_repository=CoachMessageRepository(session),
         resume_context_repository=ResumeContextRepository(session),
         job_market_repository=JobMarketRepository(session),
-        ai_service=AIService(),
+        ai_service=ai_service,
     )
 
 

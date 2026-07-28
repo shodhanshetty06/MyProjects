@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import enum
 import uuid
+from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -31,6 +32,13 @@ class ResumeVersionStatus(str, enum.Enum):
     UPLOADED = "uploaded"
     PARSING = "parsing"
     PARSED = "parsed"
+    FAILED = "failed"
+
+
+class PipelineRunStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
     FAILED = "failed"
 
 
@@ -73,6 +81,15 @@ class ResumeVersion(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
     file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # --- resume health (populated by the auto-orchestrated pipeline; see
+    # `ResumePipelineRun` and `resume_parser.tasks.calculate_resume_score_task`
+    # / `run_ats_baseline_analysis_task`) ---
+    resume_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    resume_score_breakdown: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    ats_baseline_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ats_baseline_missing_skills: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    health_computed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     resume: Mapped["Resume"] = relationship(back_populates="versions")
     parsed_data: Mapped["ResumeParsedData | None"] = relationship(
         back_populates="version", cascade="all, delete-orphan", uselist=False
@@ -93,6 +110,7 @@ class ResumeParsedData(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         nullable=False,
         unique=True,
     )
+    contact: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
     skills: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     experience: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
@@ -124,11 +142,42 @@ class ResumeEmbedding(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     version: Mapped["ResumeVersion"] = relationship(back_populates="embedding")
 
 
+class ResumePipelineRun(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Progress tracker for the auto-orchestrated resume pipeline.
+
+    One row per `ResumeVersion` (recreated on re-upload/new version), updated
+    in place by each task in the chain (parse -> embed -> score -> ATS
+    baseline -> match -> recommend -> dashboard -> notify) so `GET
+    /workspace/progress` has durable state to read on first paint/reconnect,
+    with the Redis pub/sub channel (`app.modules.workspace.realtime`) layered
+    on top for live push.
+    """
+
+    __tablename__ = "resume_pipeline_run"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    resume_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("resume_version.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    status: Mapped[PipelineRunStatus] = mapped_column(
+        String(20), nullable=False, default=PipelineRunStatus.PENDING
+    )
+    current_step: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    progress_pct: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    steps: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 __all__ = [
     "ResumeVersionStatus",
     "ResumeContentType",
+    "PipelineRunStatus",
     "Resume",
     "ResumeVersion",
     "ResumeParsedData",
     "ResumeEmbedding",
+    "ResumePipelineRun",
 ]

@@ -14,6 +14,11 @@ import uuid
 from fastapi import APIRouter, Depends
 
 from app.api.deps import CurrentUserIdDep, DBSessionDep
+from app.modules.notification.repository import (
+    NotificationPreferenceRepository,
+    NotificationRepository,
+)
+from app.modules.notification.service import NotificationService
 from app.modules.tracking.models import Application
 from app.modules.tracking.repository import (
     ApplicationNoteRepository,
@@ -46,6 +51,10 @@ def get_tracking_service(session: DBSessionDep) -> TrackingService:
         application_repository=ApplicationRepository(session),
         status_history_repository=ApplicationStatusHistoryRepository(session),
         note_repository=ApplicationNoteRepository(session),
+        notification_service=NotificationService(
+            repository=NotificationRepository(session),
+            preference_repository=NotificationPreferenceRepository(session),
+        ),
     )
 
 

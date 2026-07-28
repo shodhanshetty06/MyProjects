@@ -167,3 +167,132 @@ async def test_dashboard_filters_by_date_range(client: AsyncClient) -> None:
 
     assert response.status_code == 200
     assert response.json()["data"]["summary"]["total_applications"] == 0
+
+
+# --- Job Search integration (Section 8) -----------------------------------------------
+
+
+async def test_dashboard_saved_jobs_count_defaults_to_zero(client: AsyncClient) -> None:
+    headers = _user_header()
+    response = await client.get("/api/v1/analytics/dashboard", headers=headers)
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["saved_jobs_count"] == 0
+    assert body["average_match_score"] is None
+    assert body["top_matched_companies"] == []
+
+
+async def test_dashboard_saved_jobs_count_reflects_saved_job_table(client: AsyncClient) -> None:
+    import uuid
+
+    from app.db.session import AsyncSessionLocal
+    from app.modules.job_ingestion.models import ATSPlatform, Company, EmploymentType, Job, JobStatus, WorkMode
+
+    user_id = uuid.uuid4()
+    token, _ = create_access_token(user_id)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncSessionLocal() as session:
+        company = Company(name="Save Co", normalized_name=f"save-co-{uuid.uuid4()}")
+        session.add(company)
+        await session.flush()
+        job = Job(
+            company_id=company.id,
+            source=ATSPlatform.CUSTOM_HTML,
+            source_job_id=str(uuid.uuid4()),
+            source_url="https://example.com/job",
+            title="Engineer",
+            description="Build things.",
+            employment_type=EmploymentType.FULL_TIME,
+            work_mode=WorkMode.REMOTE,
+            status=JobStatus.ACTIVE,
+            content_hash=str(uuid.uuid4()),
+        )
+        session.add(job)
+        await session.commit()
+        await session.refresh(job)
+
+    save_response = await client.post(f"/api/v1/search/saved-jobs/{job.id}", headers=headers)
+    assert save_response.status_code == 201
+
+    response = await client.get("/api/v1/analytics/dashboard", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["data"]["saved_jobs_count"] == 1
+
+
+async def test_dashboard_match_summary_computed_from_matching_repository(
+    client: AsyncClient,
+) -> None:
+    """`average_match_score`/`top_matched_companies` are sourced from
+    `MatchingRepository.list_matches_for_user` over a directly-seeded
+    `ResumeJobMatch` row — proves the dashboard reads real match data
+    rather than reimplementing scoring.
+    """
+    import uuid
+
+    from app.db.session import AsyncSessionLocal
+    from app.modules.job_ingestion.models import ATSPlatform, Company, EmploymentType, Job, JobStatus, WorkMode
+    from app.modules.matching.models import MatchStatus, ResumeJobMatch
+    from app.modules.resume_parser.models import Resume, ResumeContentType, ResumeVersion, ResumeVersionStatus
+
+    user_id = uuid.uuid4()
+    token, _ = create_access_token(user_id)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncSessionLocal() as session:
+        company = Company(name="Matched Co", normalized_name=f"matched-co-{uuid.uuid4()}")
+        session.add(company)
+        await session.flush()
+        job = Job(
+            company_id=company.id,
+            source=ATSPlatform.CUSTOM_HTML,
+            source_job_id=str(uuid.uuid4()),
+            source_url="https://example.com/job",
+            title="Engineer",
+            description="Build things.",
+            employment_type=EmploymentType.FULL_TIME,
+            work_mode=WorkMode.REMOTE,
+            status=JobStatus.ACTIVE,
+            content_hash=str(uuid.uuid4()),
+        )
+        session.add(job)
+        await session.flush()
+
+        resume = Resume(user_id=user_id, title="R")
+        session.add(resume)
+        await session.flush()
+        version = ResumeVersion(
+            resume_id=resume.id,
+            version_number=1,
+            is_current=True,
+            status=ResumeVersionStatus.PARSED,
+            content_type=ResumeContentType.PDF,
+            original_filename="r.pdf",
+            s3_bucket="b",
+            s3_key=f"k-{uuid.uuid4()}",
+            file_size_bytes=1,
+        )
+        session.add(version)
+        await session.flush()
+
+        match = ResumeJobMatch(
+            resume_version_id=version.id,
+            job_id=job.id,
+            user_id=user_id,
+            status=MatchStatus.COMPUTED,
+            match_score=88.0,
+            matched_skills=[],
+            missing_skills=[],
+            strengths=[],
+            weaknesses=[],
+            score_breakdown={},
+        )
+        session.add(match)
+        await session.commit()
+
+    response = await client.get("/api/v1/analytics/dashboard", headers=headers)
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["average_match_score"] == 88.0
+    assert body["top_matched_companies"][0]["company_name"] == "Matched Co"
+    assert body["top_matched_companies"][0]["matches"] == 1

@@ -24,23 +24,40 @@ from app.modules.job_ingestion.models import ATSPlatform
 
 _RESUME_FIELD_CANDIDATES = ("resume", "job_application[resume]")
 
+# Many Greenhouse customers point `absolute_url` at their own custom careers
+# site (e.g. Stripe -> stripe.com/jobs/search?gh_jid=...), a JS app whose raw
+# HTML has no `<form>` at all. Every Greenhouse job also has this plain-HTML
+# "embed" apply page — the one companies iframe into those custom sites —
+# which stays server-rendered regardless of the front-end, so it's a reliable
+# fallback when the direct page has no recognizable form. Verified to return a
+# full first-name/last-name/email/resume form for a live Stripe job id.
+# `boards.greenhouse.io` 301-redirects here, so target the final host directly.
+_EMBED_URL = "https://job-boards.greenhouse.io/embed/job_app"
+
 
 class GreenhouseApplyAdapter(BaseApplyAdapter):
     platform = ATSPlatform.GREENHOUSE
 
     async def _fetch_form(self):
-        assert self.http_client is not None
-        try:
-            response = await self.http_client.get(self.job_url)
-            response.raise_for_status()
-        except Exception as exc:  # noqa: BLE001 -- reclassified by errors.classify_exception upstream
-            raise ServiceUnavailableError(
-                f"Could not load the Greenhouse apply page: {exc}"
-            ) from exc
-
-        form = find_form(response.text, form_selector="#application-form, form#application_form, form")
+        response, form = await self._fetch_form_from(self.job_url)
+        if form is None and self.ats_identifier:
+            embed_url = f"{_EMBED_URL}?for={self.ats_identifier}&token={self.external_id}"
+            embed_response, embed_form = await self._fetch_form_from(embed_url)
+            if embed_form is not None:
+                response, form = embed_response, embed_form
         if form is None:
             raise ServiceUnavailableError("Greenhouse apply page has no recognizable application form.")
+        return response, form
+
+    async def _fetch_form_from(self, url: str):
+        assert self.http_client is not None
+        try:
+            response = await self.http_client.get(url)
+            response.raise_for_status()
+        except Exception:  # noqa: BLE001 -- caller falls back to the embed URL, or raises if that fails too
+            return None, None
+
+        form = find_form(response.text, form_selector="#application-form, form#application_form, form")
         return response, form
 
     async def discover_fields(self) -> list[ApplicationField]:

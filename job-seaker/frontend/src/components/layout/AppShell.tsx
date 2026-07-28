@@ -3,15 +3,13 @@ import {
   Bell,
   Bot,
   Briefcase,
-  Building2,
   ChevronsLeft,
   ChevronsRight,
-  FileText,
+  FileUp,
   LayoutDashboard,
   LogOut,
   Menu,
   Search,
-  Send,
   Settings,
   Shield,
   Sparkles,
@@ -48,36 +46,20 @@ interface NavItem {
   icon: ComponentType<{ className?: string }>;
 }
 
-interface NavSection {
-  label: string;
-  items: NavItem[];
-}
-
-const NAV_SECTIONS: NavSection[] = [
-  {
-    label: "Workspace",
-    items: [
-      { to: paths.dashboard, label: "Dashboard", icon: LayoutDashboard },
-      { to: paths.search, label: "Job Search", icon: Search },
-      { to: paths.companies, label: "Companies", icon: Building2 },
-    ],
-  },
-  {
-    label: "Career",
-    items: [
-      { to: paths.resumes, label: "Resumes", icon: FileText },
-      { to: paths.autoApply, label: "Auto Apply", icon: Send },
-      { to: paths.tracker, label: "Tracker", icon: Briefcase },
-      { to: paths.coach, label: "AI Coach", icon: Bot },
-    ],
-  },
-  {
-    label: "Insights",
-    items: [
-      { to: paths.analytics, label: "Analytics", icon: BarChart3 },
-      { to: paths.notifications, label: "Notifications", icon: Bell },
-    ],
-  },
+/**
+ * Flat primary nav — the AI Workspace replaces separate Resume Analysis /
+ * ATS Analysis / Manual Recommendations pages as the everyday entry point,
+ * so those (and Auto Apply, Companies, Saved/Recommended Jobs standalone,
+ * the Notifications page) stay registered in `AppRoutes.tsx` for
+ * deep-linking but drop out of this list.
+ */
+const NAV_ITEMS: NavItem[] = [
+  { to: paths.workspace, label: "Workspace", icon: LayoutDashboard },
+  { to: paths.search, label: "Jobs", icon: Search },
+  { to: paths.tracker, label: "Applications", icon: Briefcase },
+  { to: paths.coach, label: "AI Coach", icon: Bot },
+  { to: paths.analytics, label: "Analytics", icon: BarChart3 },
+  { to: paths.settingsProfile, label: "Settings", icon: Settings },
 ];
 
 export function AppShell() {
@@ -152,64 +134,38 @@ export function AppShell() {
           </button>
         </div>
 
-        <nav className="flex flex-1 flex-col gap-5 overflow-y-auto px-3 py-3" aria-label="Main navigation">
-          {NAV_SECTIONS.map((section) => (
-            <div key={section.label} className="flex flex-col gap-0.5">
-              <p
-                className={cn(
-                  "px-2.5 pb-1 text-[11px] font-medium uppercase tracking-wide text-ink-muted",
-                  collapsed && "lg:hidden",
-                )}
+        <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-3" aria-label="Main navigation">
+          {NAV_ITEMS.map((item) => {
+            const link = (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                onClick={() => setMobileNavOpen(false)}
+                className={({ isActive }) =>
+                  cn(
+                    "flex items-center gap-2.5 rounded-[var(--radius-md)] px-2.5 py-2 text-sm font-medium transition-colors",
+                    collapsed && "lg:justify-center lg:px-0",
+                    isActive
+                      ? "bg-brand-soft text-brand"
+                      : "text-ink-secondary hover:bg-surface-2 hover:text-ink",
+                  )
+                }
               >
-                {section.label}
-              </p>
-              {section.items.map((item) => {
-                const link = (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    onClick={() => setMobileNavOpen(false)}
-                    className={({ isActive }) =>
-                      cn(
-                        "flex items-center gap-2.5 rounded-[var(--radius-md)] px-2.5 py-2 text-sm font-medium transition-colors",
-                        collapsed && "lg:justify-center lg:px-0",
-                        isActive
-                          ? "bg-brand-soft text-brand"
-                          : "text-ink-secondary hover:bg-surface-2 hover:text-ink",
-                      )
-                    }
-                  >
-                    <item.icon className="size-4 shrink-0" />
-                    <span className={cn(collapsed && "lg:hidden")}>{item.label}</span>
-                  </NavLink>
-                );
-                return collapsed ? (
-                  <Tooltip key={item.to} content={item.label} side="right">
-                    {link}
-                  </Tooltip>
-                ) : (
-                  link
-                );
-              })}
-            </div>
-          ))}
+                <item.icon className="size-4 shrink-0" />
+                <span className={cn(collapsed && "lg:hidden")}>{item.label}</span>
+              </NavLink>
+            );
+            return collapsed ? (
+              <Tooltip key={item.to} content={item.label} side="right">
+                {link}
+              </Tooltip>
+            ) : (
+              link
+            );
+          })}
         </nav>
 
         <div className="flex flex-col gap-1 border-t border-border px-3 py-3">
-          <NavLink
-            to={paths.settings}
-            onClick={() => setMobileNavOpen(false)}
-            className={({ isActive }) =>
-              cn(
-                "flex items-center gap-2.5 rounded-[var(--radius-md)] px-2.5 py-2 text-sm font-medium transition-colors",
-                collapsed && "lg:justify-center lg:px-0",
-                isActive ? "bg-brand-soft text-brand" : "text-ink-secondary hover:bg-surface-2 hover:text-ink",
-              )
-            }
-          >
-            <Settings className="size-4 shrink-0" />
-            <span className={cn(collapsed && "lg:hidden")}>Settings</span>
-          </NavLink>
           <button
             type="button"
             onClick={toggleSidebar}
@@ -246,6 +202,16 @@ export function AppShell() {
           </button>
 
           <div className="ml-auto flex items-center gap-1.5">
+            <Tooltip content="Back to upload resume">
+              <NavLink
+                to={paths.onboarding}
+                className="flex size-8 items-center justify-center rounded-[var(--radius-md)] text-ink-secondary transition-colors hover:bg-surface-2 hover:text-ink"
+                aria-label="Back to upload resume"
+              >
+                <FileUp className="size-4" aria-hidden />
+              </NavLink>
+            </Tooltip>
+
             <Tooltip content="Notifications">
               <NavLink
                 to={paths.notifications}

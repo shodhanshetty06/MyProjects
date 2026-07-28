@@ -105,6 +105,11 @@ class ResumeJobMatch(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     weaknesses: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     score_breakdown: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
+    # LLM-generated one-line "why this fits" summary — generated lazily on
+    # first `GET .../why-score` request and cached here (see
+    # `matching/narrative.py`), not computed for every match up front.
+    ai_narrative: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
