@@ -13,6 +13,11 @@ export default defineConfig({
   server: {
     host: true,
     port: 3000,
+    // Allow the app to be reached through tunnels (e.g. ngrok) when sharing
+    // a running dev server externally. Vite otherwise blocks unknown Host
+    // headers. `.ngrok-free.dev`/`.ngrok-free.app` cover the free ngrok
+    // domains; drop these once you move to a fixed/reserved domain.
+    allowedHosts: [".ngrok-free.dev", ".ngrok-free.app", ".ngrok.io"],
     // Docker Desktop on Windows doesn't propagate host filesystem change
     // events into the Linux container over the bind mount, so Vite's
     // default watcher never fires — fall back to polling.
