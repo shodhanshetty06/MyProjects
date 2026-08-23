@@ -34,7 +34,7 @@
     "react-dom": "^19.2.7",
     "react-hook-form": "^7.81.0",
     "react-resizable-panels": "^4.12.2",
-    "react-router-dom": "^6.28.0",
+    "react-router-dom": "^7.18.2",
     "recharts": "^3.9.2",
     "tailwind-merge": "^3.6.0",
     "zod": "^4.4.3",
